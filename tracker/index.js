@@ -295,7 +295,7 @@ function boot(script) {
             emit('outbound', '', { url: url.origin + url.pathname })
         }
       },
-      { passive: true },
+      { passive: true, capture: true },
     )
     const formIds = new WeakMap(),
       seenForms = new WeakSet(),

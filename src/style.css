@@ -1616,3 +1616,124 @@ code {
     max-height: 550px;
   }
 }
+/* Analytical controls stay usable in wide tables and compact layouts. */
+.menuBackdrop {
+  position: fixed;
+  inset: 0;
+  background: #0005;
+  border: 0;
+  z-index: 39;
+}
+.businessImport > summary {
+  padding: 20px 24px;
+  cursor: pointer;
+  font-weight: 600;
+}
+.menuClose {
+  align-self: flex-end;
+  margin: 12px 12px 0;
+}
+.sidebar {
+  z-index: 40;
+}
+.sectionActions {
+  flex-wrap: wrap;
+}
+.businessControls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 20px 24px;
+  align-items: end;
+}
+.businessControls label {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  font-size: 12px;
+  min-width: 150px;
+  flex: 1;
+}
+.businessControls input,
+.businessControls select,
+.filterBar > select,
+.reportToolbar select {
+  padding: 10px;
+  border: 1px solid #dfe3e8;
+  border-radius: 7px;
+  background: #fff;
+  max-width: 100%;
+  min-width: 0;
+  font: inherit;
+}
+.funnelEditorRow {
+  display: grid;
+  grid-template-columns: 24px 120px minmax(100px, 1fr) 32px;
+  gap: 10px;
+  align-items: center;
+}
+.funnelEditorRow select,
+.funnelEditorRow input {
+  width: 100%;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #dfe3e8;
+  border-radius: 6px;
+}
+.advancedSegment {
+  grid-column: 1/-1;
+  width: 100%;
+  padding: 12px 0;
+  border-top: 1px solid #e5e8ed;
+}
+.advancedSegment summary {
+  cursor: pointer;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+.segmentRule {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0;
+}
+.segmentRule input,
+.segmentRule select {
+  min-width: 100px;
+  flex: 1;
+  padding: 9px;
+  border: 1px solid #dfe3e8;
+  border-radius: 6px;
+}
+.funnelSteps details {
+  font-size: 12px;
+  max-width: 100%;
+  text-align: left;
+}
+.funnelSteps details button {
+  display: block;
+  margin: 6px 0;
+}
+@media (max-width: 760px) {
+  .businessControls {
+    padding: 16px;
+    gap: 10px;
+  }
+  .businessControls label {
+    min-width: 125px;
+  }
+  .funnelEditorRow {
+    grid-template-columns: 20px 90px minmax(80px, 1fr) 26px;
+    gap: 6px;
+  }
+  .segmentRule {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+  .segmentRule input {
+    max-width: 100%;
+  }
+  .filterBar > select {
+    width: 100%;
+  }
+}

@@ -1,0 +1,189 @@
+{
+  "date": "2026-10-27",
+  "unitTests": 27,
+  "load": {
+    "version": "0.2.0",
+    "scope": "Synthetic local demo, 60 concurrent read requests, same report mix as pre-change audit; no collector ingestion load",
+    "endpoints": [
+      {
+        "path": "overview",
+        "status": 200,
+        "ms": 685
+      },
+      {
+        "path": "reports/sources",
+        "status": 200,
+        "ms": 22
+      },
+      {
+        "path": "reports/campaigns",
+        "status": 200,
+        "ms": 17
+      },
+      {
+        "path": "reports/pages",
+        "status": 200,
+        "ms": 71
+      },
+      {
+        "path": "reports/entry",
+        "status": 200,
+        "ms": 14
+      },
+      {
+        "path": "reports/exit",
+        "status": 200,
+        "ms": 9
+      },
+      {
+        "path": "reports/devices",
+        "status": 200,
+        "ms": 7
+      },
+      {
+        "path": "reports/browsers",
+        "status": 200,
+        "ms": 10
+      },
+      {
+        "path": "reports/os",
+        "status": 200,
+        "ms": 7
+      },
+      {
+        "path": "reports/countries",
+        "status": 200,
+        "ms": 7
+      },
+      {
+        "path": "reports/events",
+        "status": 200,
+        "ms": 16
+      },
+      {
+        "path": "reports/performance",
+        "status": 200,
+        "ms": 15
+      },
+      {
+        "path": "reports/errors",
+        "status": 200,
+        "ms": 9
+      },
+      {
+        "path": "reports/retention",
+        "status": 200,
+        "ms": 13
+      },
+      {
+        "path": "visits",
+        "status": 200,
+        "ms": 3
+      },
+      {
+        "path": "goals",
+        "status": 200,
+        "ms": 9
+      },
+      {
+        "path": "funnels",
+        "status": 200,
+        "ms": 64
+      },
+      {
+        "path": "behavior",
+        "status": 200,
+        "ms": 99
+      },
+      {
+        "path": "map-snapshot",
+        "status": 200,
+        "ms": 46
+      },
+      {
+        "path": "ecommerce",
+        "status": 200,
+        "ms": 4
+      },
+      {
+        "path": "acquisition",
+        "status": 200,
+        "ms": 6
+      },
+      {
+        "path": "saved",
+        "status": 200,
+        "ms": 1
+      },
+      {
+        "path": "members",
+        "status": 200,
+        "ms": 1
+      },
+      {
+        "path": "keys",
+        "status": 200,
+        "ms": 1
+      },
+      {
+        "path": "business",
+        "status": 200,
+        "ms": 524
+      },
+      {
+        "path": "options",
+        "status": 200,
+        "ms": 60
+      },
+      {
+        "path": "diagnostics",
+        "status": 200,
+        "ms": 20
+      },
+      {
+        "path": "insights",
+        "status": 200,
+        "ms": 12
+      }
+    ],
+    "concurrent": {
+      "requests": 60,
+      "errors": 0,
+      "p50ms": 3022,
+      "p95ms": 4358,
+      "maxms": 4362
+    }
+  },
+  "browser": {
+    "version": "0.2.0",
+    "browser": "real fixture submission and purchase",
+    "visits": 1,
+    "pageviews": 2,
+    "source": "releaseqa",
+    "entry": "/fixture/",
+    "exit": "/fixture/pricing",
+    "pricingClickPath": "/fixture/",
+    "ecommerceRevenue": 5000,
+    "recordingMasked": true,
+    "crm": {
+      "imported": 3,
+      "duplicates": 0
+    },
+    "business": {
+      "revenue": 3000,
+      "grossProfit": 2000,
+      "qualified": 1,
+      "cost": null
+    }
+  },
+  "mobile": {
+    "width": 390,
+    "horizontalOverflow": false,
+    "menuOpenCloseNavigation": true
+  },
+  "limitations": [
+    "Local synthetic data; no production throughput guarantee",
+    "No vendor CRM credentials or real account connection tested",
+    "Docker and Compose verified by CI, not a local Docker daemon"
+  ]
+}

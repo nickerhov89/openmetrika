@@ -82,6 +82,7 @@ export function ingest(db, site, body, ua, now = Date.now()) {
     !validId(body.visitor) ||
     !validId(body.session) ||
     !Array.isArray(body.events) ||
+    !body.events.length ||
     body.events.length > 100
   )
     throw Error('Некорректный пакет событий')
@@ -114,8 +115,8 @@ export function ingest(db, site, body, ua, now = Date.now()) {
       body.session,
       site.id,
       body.visitor,
-      now,
-      now,
+      Math.min(...events.map((e) => e.ts), now),
+      Math.max(...events.map((e) => e.ts), 0) || now,
       path,
       path,
       attr.source,
@@ -146,8 +147,9 @@ export function ingest(db, site, body, ua, now = Date.now()) {
       if (!inserted) continue
       accepted++
       db.prepare(
-        'UPDATE visits SET ended=MAX(ended,?),pageviews=pageviews+?,active_seconds=MIN(86400,active_seconds+?),max_scroll=MAX(max_scroll,?) WHERE site_id=? AND id=?',
+        'UPDATE visits SET started=MIN(started,?),ended=MAX(ended,?),pageviews=pageviews+?,active_seconds=MIN(86400,active_seconds+?),max_scroll=MAX(max_scroll,?) WHERE site_id=? AND id=?',
       ).run(
+        e.ts,
         e.ts,
         e.type === 'pageview' ? 1 : 0,
         e.type === 'heartbeat' ? e.props.seconds : 0,
@@ -155,13 +157,6 @@ export function ingest(db, site, body, ua, now = Date.now()) {
         site.id,
         body.session,
       )
-      if (e.type === 'pageview')
-        db.prepare('UPDATE visits SET exit=? WHERE site_id=? AND id=? AND ended<=?').run(
-          e.path,
-          site.id,
-          body.session,
-          e.ts,
-        )
       for (const goal of goals)
         if (
           (goal.kind === 'page' && e.type === 'pageview' && e.path === goal.value) ||
@@ -181,6 +176,22 @@ export function ingest(db, site, body, ua, now = Date.now()) {
           e.props.revenue,
           e.props.currency,
           JSON.stringify(e.props.items),
+        )
+    }
+    if (!accepted && !existing)
+      db.prepare('DELETE FROM visits WHERE site_id=? AND id=?').run(site.id, body.session)
+    if (accepted) {
+      const pages = db
+        .prepare(
+          "SELECT path FROM events WHERE site_id=? AND visit_id=? AND type='pageview' ORDER BY ts,rowid",
+        )
+        .all(site.id, body.session)
+      if (pages.length)
+        db.prepare('UPDATE visits SET entry=?,exit=? WHERE site_id=? AND id=?').run(
+          pages[0].path,
+          pages.at(-1).path,
+          site.id,
+          body.session,
         )
     }
     db.exec('COMMIT')
@@ -215,8 +226,8 @@ export function ingestReplay(db, site, body) {
       'SELECT COALESCE(SUM(length(payload)),0) AS size FROM replay_chunks WHERE site_id=? AND visit_id=?',
     )
     .get(site.id, body.session).size
-  if (total > 10 * 1024 * 1024) throw Error('Лимит записи визита достигнут')
   const data = gzipSync(JSON.stringify(events))
+  if (total + data.length > 10 * 1024 * 1024) throw Error('Лимит записи визита достигнут')
   db.prepare(
     'INSERT OR IGNORE INTO replay_chunks(site_id,visit_id,chunk_id,ts,payload) VALUES(?,?,?,?,?)',
   ).run(site.id, body.session, body.chunk, Date.now(), data)

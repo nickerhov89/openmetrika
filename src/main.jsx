@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { createRoot } from 'react-dom/client'
+import Business from './Business.jsx'
 import {
   LayoutDashboard,
   ChartNoAxesCombined,
@@ -36,8 +37,10 @@ import './style.css'
 const MapOverlay = React.lazy(() => import('./MapOverlay.jsx'))
 
 const fmt = (n) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 1 }).format(n || 0)
+let reportTimezone = 'UTC'
 const date = (n) =>
   new Date(n).toLocaleString('ru-RU', {
+    timeZone: reportTimezone,
     day: '2-digit',
     month: 'short',
     hour: '2-digit',
@@ -59,21 +62,21 @@ function useData(path, version = 0) {
   const [state, set] = useState({ data: null, error: '', loading: true })
   useEffect(() => {
     let alive = true
-    set((s) => ({ ...s, loading: true, error: '' }))
+    set((s) => ({ data: s.path === path ? s.data : null, loading: true, error: '', path }))
     const load = () =>
       path &&
       api(path)
-        .then((data) => alive && set({ data, error: '', loading: false }))
-        .catch((e) => alive && set({ data: null, error: e.message, loading: false }))
+        .then((data) => alive && set({ data, error: '', loading: false, path }))
+        .catch((e) => alive && set({ data: null, error: e.message, loading: false, path }))
     if (path) load()
-    else set({ data: null, error: '', loading: false })
+    else set({ data: null, error: '', loading: false, path })
     const timer = path?.includes('/overview') ? setInterval(load, 30000) : null
     return () => {
       alive = false
       if (timer) clearInterval(timer)
     }
   }, [path, version])
-  return state
+  return state.path === path ? state : { data: null, error: '', loading: !!path }
 }
 const nav = [
   ['overview', 'Сводка', LayoutDashboard],
@@ -85,6 +88,7 @@ const nav = [
   ['funnels', 'Воронки', GitFork],
   ['ecommerce', 'Электронная коммерция', ShoppingBag],
   ['acquisition', 'Сквозная аналитика', Activity],
+  ['business', 'Лиды и прибыль', Goal],
   ['settings', 'Настройки', Settings],
 ]
 const titles = Object.fromEntries(nav.map(([id, name]) => [id, name]))
@@ -209,7 +213,7 @@ function Table({ rows, columns, onRow }) {
               key={r.id || r.order_id || i}
               tabIndex={onRow ? 0 : undefined}
               onKeyDown={(e) => {
-                if (onRow && (e.key === 'Enter' || e.key === ' ')) {
+                if (onRow && e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
                   e.preventDefault()
                   onRow(r)
                 }
@@ -357,15 +361,64 @@ function App() {
   const [session, setSession] = useState(null),
     [authError, setAuthError] = useState(''),
     [version, bump] = useState(0),
-    [siteId, setSiteId] = useState(localStorage.getItem('om_site') || ''),
+    [siteId, setSiteId] = useState(
+      new URLSearchParams(location.search).get('site') || localStorage.getItem('om_site') || '',
+    ),
     [view, setView] = useState(location.hash.slice(1) || 'overview'),
     [modal, setModal] = useState(null),
     [toast, setToast] = useState(''),
-    [mobile, setMobile] = useState(false)
-  const [filters, setFilters] = useState({ days: '30' }),
+    [mobile, setMobile] = useState(false),
+    [compact, setCompact] = useState(() => matchMedia('(max-width:760px)').matches)
+  const [filters, setFilters] = useState(() => ({
+      days: '30',
+      ...Object.fromEntries(
+        [...new URLSearchParams(location.search)].filter(([k]) =>
+          [
+            'days',
+            'from',
+            'to',
+            'source',
+            'medium',
+            'browser',
+            'os',
+            'country',
+            'attribution',
+            'attributionDays',
+            'businessBasis',
+            'displayCurrency',
+            'campaign',
+            'device',
+            'path',
+            'pathOp',
+            'goal',
+            'converted',
+            'replay',
+            'compareFrom',
+            'compareTo',
+            'conditions',
+          ].includes(k),
+        ),
+      ),
+    })),
     [showFilters, setShowFilters] = useState(false),
-    [report, setReport] = useState('sources'),
-    [selectedVisit, setSelectedVisit] = useState(null)
+    [report, setReport] = useState(new URLSearchParams(location.search).get('report') || 'sources'),
+    [selectedVisit, setSelectedVisit] = useState(null),
+    [editFunnel, setEditFunnel] = useState(null),
+    [editSaved, setEditSaved] = useState(null)
+  useEffect(() => {
+    const media = matchMedia('(max-width:760px)'),
+      update = () => setCompact(media.matches)
+    media.addEventListener('change', update)
+    return () => media.removeEventListener('change', update)
+  }, [])
+  useEffect(() => {
+    if (!mobile) return
+    const escape = (e) => {
+      if (e.key === 'Escape') setMobile(false)
+    }
+    document.addEventListener('keydown', escape)
+    return () => document.removeEventListener('keydown', escape)
+  }, [mobile])
   const reload = () => bump((v) => v + 1),
     notify = (msg) => {
       setToast(msg)
@@ -393,8 +446,26 @@ function App() {
     q = new URLSearchParams(Object.entries(filters).filter(([, v]) => v)).toString(),
     query = '?' + q
   const summary = useData(base ? base + '/overview' + query : null, version),
-    saved = useData(base ? base + '/saved' : null, version)
-  const go = (id) => {
+    saved = useData(base ? base + '/saved' : null, version),
+    goals = useData(base ? base + '/goals?days=366' : null, version),
+    options = useData(base ? base + '/options' : null, version)
+  useEffect(() => {
+    history.replaceState(
+      null,
+      '',
+      '?' +
+        new URLSearchParams({
+          ...Object.fromEntries(Object.entries(filters).filter(([, v]) => v)),
+          report,
+          ...(site?.id ? { site: site.id } : {}),
+        }).toString() +
+        '#' +
+        view,
+    )
+  }, [q, report, view, site?.id])
+  const go = (id, kind, segment) => {
+    if (segment) setFilters((f) => ({ ...f, ...segment }))
+    if (kind) setReport(kind)
     location.hash = id
     setView(id)
     setMobile(false)
@@ -409,13 +480,35 @@ function App() {
       throw e
     }
   }
+  reportTimezone = site?.timezone || 'UTC'
   if (authError) return <Empty title="Не удалось подключиться" text={authError} />
   if (!session) return <div className="loading">Загружаем OpenMetrika…</div>
   if (!session.user) return <Auth setup={session.setup} onDone={reload} />
+  if (sites.loading && !sites.data) return <div className="loading">Загружаем счётчики…</div>
   const change = (key, value) => setFilters((f) => ({ ...f, [key]: value }))
   return (
     <div className="shell">
-      <aside className={mobile ? 'sidebar open' : 'sidebar'}>
+      {compact && mobile && (
+        <button
+          className="menuBackdrop"
+          aria-label="Закрыть навигацию"
+          onClick={() => setMobile(false)}
+        />
+      )}
+      <aside
+        className={mobile ? 'sidebar open' : 'sidebar'}
+        inert={compact && !mobile}
+        aria-hidden={compact && !mobile ? true : undefined}
+      >
+        {compact && mobile && (
+          <button
+            className="icon menuClose"
+            aria-label="Закрыть меню"
+            onClick={() => setMobile(false)}
+          >
+            <X size={20} />
+          </button>
+        )}
         <a href="#overview" className="brand">
           <span className="brandMark">m.</span>
           <span>
@@ -489,7 +582,7 @@ function App() {
           </div>
         </div>
       </aside>
-      <main className="workspace">
+      <main className="workspace" inert={compact && mobile}>
         <header className="topbar">
           <button
             className="icon mobileMenu"
@@ -524,7 +617,14 @@ function App() {
                   {fmt(summary.data.live)} сейчас на сайте
                 </span>
               )}
-              <button className="button" onClick={() => setModal('save')} disabled={!site}>
+              <button
+                className="button"
+                onClick={() => {
+                  setEditSaved(null)
+                  setModal('save')
+                }}
+                disabled={!site}
+              >
                 <Bookmark size={16} />
                 Сохранить
               </button>
@@ -568,6 +668,19 @@ function App() {
                     </button>
                   ))}
                 </div>
+                <select
+                  aria-label="Цель для анализа"
+                  value={filters.goal || site.primary_goal || 'any'}
+                  onChange={(e) => change('goal', e.target.value)}
+                >
+                  <option value="any">Любая цель</option>
+                  {goals.data?.map((g) => (
+                    <option key={g.id} value={g.id}>
+                      {g.name}
+                      {site.primary_goal === g.id ? ' · основная' : ''}
+                    </option>
+                  ))}
+                </select>
                 <div className="dateInputs">
                   <input
                     type="date"
@@ -599,8 +712,31 @@ function App() {
                   <Field label="Источник">
                     <input
                       placeholder="Например, Google"
+                      list="source-options"
                       value={filters.source || ''}
                       onChange={(e) => change('source', e.target.value)}
+                    />
+                  </Field>
+                  <datalist id="source-options">
+                    {options.data?.sources.map((v) => (
+                      <option value={v} key={v} />
+                    ))}
+                  </datalist>
+                  <datalist id="campaign-options">
+                    {options.data?.campaigns.map((v) => (
+                      <option value={v} key={v} />
+                    ))}
+                  </datalist>
+                  <datalist id="page-options">
+                    {options.data?.pages.map((v) => (
+                      <option value={v} key={v} />
+                    ))}
+                  </datalist>
+                  <Field label="UTM-кампания">
+                    <input
+                      list="campaign-options"
+                      value={filters.campaign || ''}
+                      onChange={(e) => change('campaign', e.target.value)}
                     />
                   </Field>
                   <Field label="Устройство">
@@ -617,10 +753,39 @@ function App() {
                   <Field label="Страница">
                     <input
                       placeholder="/pricing"
+                      list="page-options"
                       value={filters.path || ''}
                       onChange={(e) => change('path', e.target.value)}
                     />
                   </Field>
+                  <Field label="Условие страницы">
+                    <select
+                      value={filters.pathOp || 'exact'}
+                      onChange={(e) => change('pathOp', e.target.value)}
+                    >
+                      <option value="exact">Посещали точный путь</option>
+                      <option value="contains">Путь содержит</option>
+                      <option value="exclude">Не посещали путь</option>
+                    </select>
+                  </Field>
+                  <Field label="Сравнить с: начало">
+                    <input
+                      type="date"
+                      value={filters.compareFrom || ''}
+                      onChange={(e) => change('compareFrom', e.target.value)}
+                    />
+                  </Field>
+                  <Field label="Сравнить с: конец">
+                    <input
+                      type="date"
+                      value={filters.compareTo || ''}
+                      onChange={(e) => change('compareTo', e.target.value)}
+                    />
+                  </Field>
+                  <SegmentRules
+                    value={filters.conditions || ''}
+                    onChange={(value) => change('conditions', value)}
+                  />
                   <label className="check">
                     <input
                       type="checkbox"
@@ -649,6 +814,15 @@ function App() {
                         {s.name}
                       </button>
                       <button
+                        aria-label={'Обновить ' + s.name}
+                        onClick={() => {
+                          setEditSaved(s)
+                          setModal('save')
+                        }}
+                      >
+                        ✎
+                      </button>
+                      <button
                         aria-label={'Удалить ' + s.name}
                         onClick={() => mutate('/saved/' + s.id, 'DELETE').catch(() => {})}
                       >
@@ -658,6 +832,36 @@ function App() {
                   ))}
                 </div>
               )}
+              {['business', 'acquisition'].includes(view) &&
+                [
+                  'device',
+                  'browser',
+                  'os',
+                  'country',
+                  'path',
+                  'converted',
+                  'replay',
+                  'medium',
+                  'conditions',
+                ].some((k) => filters[k]) && (
+                  <p className="notice">
+                    В этом разделе применяются период, источник и кампания.{' '}
+                    <button
+                      className="textButton"
+                      onClick={() =>
+                        setFilters((f) =>
+                          Object.fromEntries(
+                            Object.entries(f).filter(([k]) =>
+                              ['days', 'from', 'to', 'source', 'campaign'].includes(k),
+                            ),
+                          ),
+                        )
+                      }
+                    >
+                      Сбросить условия визитов
+                    </button>
+                  </p>
+                )}
               {summary.error && <p className="error">{summary.error}</p>}
               {view === 'overview' && (
                 <Overview data={summary.data} base={base} query={query} version={version} go={go} />
@@ -669,6 +873,24 @@ function App() {
                   version={version}
                   report={report}
                   setReport={setReport}
+                  drill={(row) => {
+                    const key = {
+                      sources: 'source',
+                      campaigns: 'campaign',
+                      pages: 'path',
+                      entry: 'path',
+                      exit: 'path',
+                      devices: 'device',
+                      browsers: 'browser',
+                      os: 'os',
+                      countries: 'country',
+                    }[report]
+                    if (key) {
+                      setFilters((f) => ({ ...f, [key]: row[key] || row.label }))
+                      go('overview')
+                      setShowFilters(true)
+                    }
+                  }}
                 />
               )}
               {(view === 'visits' || view === 'replay') && (
@@ -696,7 +918,15 @@ function App() {
                   base={base}
                   query={query}
                   version={version}
-                  add={() => setModal('funnel')}
+                  add={() => {
+                    setEditFunnel(null)
+                    setModal('funnel')
+                  }}
+                  edit={(f) => {
+                    setEditFunnel(f)
+                    setModal('funnel')
+                  }}
+                  select={(v) => setSelectedVisit({ id: v })}
                   remove={(id) => mutate('/funnels/' + id, 'DELETE').catch(() => {})}
                   editable={site.role !== 'viewer' && !session.readOnly}
                 />
@@ -712,6 +942,21 @@ function App() {
                   editable={site.role === 'owner' && !session.readOnly}
                 />
               )}
+              {view === 'business' && (
+                <Business
+                  base={base}
+                  query={query}
+                  configure={(patch) => setFilters((f) => ({ ...f, ...patch }))}
+                  version={version}
+                  useData={useData}
+                  Table={Table}
+                  api={api}
+                  notify={notify}
+                  reload={reload}
+                  editable={site.role === 'owner' && !session.readOnly}
+                  select={(v) => setSelectedVisit({ id: v })}
+                />
+              )}
               {view === 'settings' && (
                 <SettingsPage
                   site={site}
@@ -725,7 +970,7 @@ function App() {
             </>
           )}
           <footer className="footer">
-            <span>OpenMetrika · Открытая аналитика · Время отчётов: UTC</span>
+            <span>OpenMetrika · Открытая аналитика · Время отчётов: {site?.timezone || 'UTC'}</span>
             <a
               href="https://polzaagency.ru/?utm_source=openmetrika&utm_medium=product&utm_campaign=footer"
               target="_blank"
@@ -770,24 +1015,25 @@ function App() {
                 }
                 if (modal === 'goal') await mutate('/goals', 'POST', f)
                 if (modal === 'save')
-                  await mutate('/saved', 'POST', {
-                    name: f.name,
-                    config: { view, filters, report },
-                  })
+                  await mutate(
+                    editSaved ? '/saved/' + editSaved.id : '/saved',
+                    editSaved ? 'PATCH' : 'POST',
+                    {
+                      name: f.name,
+                      config: { view, filters, report },
+                    },
+                  )
                 if (modal === 'funnel')
-                  await mutate('/funnels', 'POST', {
-                    name: f.name,
-                    steps: f.steps
-                      .split('\n')
-                      .filter(Boolean)
-                      .map((line) => {
-                        const pos = line.indexOf(':')
-                        return {
-                          kind: line.slice(0, pos).trim(),
-                          value: line.slice(pos + 1).trim(),
-                        }
-                      }),
-                  })
+                  await mutate(
+                    editFunnel ? '/funnels/' + editFunnel.id : '/funnels',
+                    editFunnel ? 'PATCH' : 'POST',
+                    {
+                      name: f.name,
+                      steps: JSON.parse(f.steps),
+                      scope: f.scope,
+                      window_days: Number(f.window_days),
+                    },
+                  )
                 setModal(null)
                 reload()
               } catch (e) {
@@ -795,7 +1041,24 @@ function App() {
               }
             }}
           >
-            <Field label="Название" name="name" required />
+            <Field
+              label="Название"
+              name="name"
+              required
+              defaultValue={
+                modal === 'funnel'
+                  ? editFunnel?.name
+                  : modal === 'save'
+                    ? editSaved?.name
+                    : undefined
+              }
+            />
+            {modal === 'save' && (
+              <p className="hint">
+                Сохраняются текущие открытые раздел, период и условия. При обновлении они заменят
+                предыдущую конфигурацию отчёта.
+              </p>
+            )}
             {modal === 'site' && (
               <>
                 <Field
@@ -827,19 +1090,7 @@ function App() {
                 <p className="hint">Цели учитываются с момента создания.</p>
               </>
             )}
-            {modal === 'funnel' && (
-              <>
-                <Field label="Шаги: page:/путь или event:имя, по одному на строку">
-                  <textarea
-                    name="steps"
-                    rows="5"
-                    defaultValue={'page:/\npage:/pricing\nevent:lead_sent'}
-                    required
-                  />
-                </Field>
-                <p className="hint">Шаги учитываются в указанном порядке внутри одного визита.</p>
-              </>
-            )}
+            {modal === 'funnel' && <FunnelFields initial={editFunnel} options={options.data} />}
             <button className="yellow" disabled={session.readOnly}>
               Сохранить
             </button>
@@ -854,7 +1105,8 @@ function App() {
 }
 function Overview({ data, base, query, version, go }) {
   const sources = useData(base + '/reports/sources' + query, version),
-    pages = useData(base + '/reports/pages' + query, version)
+    pages = useData(base + '/reports/pages' + query, version),
+    signals = useData(base + '/insights' + query, version)
   if (!data) return <div className="loading">Считаем показатели…</div>
   const metrics = [
     ['Визиты', 'visits', false],
@@ -866,6 +1118,25 @@ function Overview({ data, base, query, version, go }) {
   ]
   return (
     <>
+      <div className="sectionActions">
+        <p className="hint">
+          Конверсия — доля визитов с выбранной целью. Сравнение:{' '}
+          {new Date(data.previousPeriod.from).toLocaleDateString('ru-RU', {
+            timeZone: reportTimezone,
+          })}{' '}
+          —{' '}
+          {new Date(data.previousPeriod.to).toLocaleDateString('ru-RU', {
+            timeZone: reportTimezone,
+          })}
+          .
+        </p>
+        <button className="button" onClick={() => go('visits')}>
+          Визиты сегмента
+        </button>
+        <button className="button" onClick={() => go('replay')}>
+          Записи сегмента
+        </button>
+      </div>
       <div className="metrics">
         {metrics.map(([title, key, pct]) => {
           const n = data.current[key],
@@ -918,11 +1189,43 @@ function Overview({ data, base, query, version, go }) {
         </div>
         <Chart rows={data.timeline} />
       </section>
+      <section className="card">
+        <div className="cardHeading">
+          <div>
+            <h2>Что проверить</h2>
+            <p>{signals.data?.note || 'Ищем заметные изменения по источникам'}</p>
+          </div>
+        </div>
+        {signals.data?.signals.length ? (
+          signals.data.signals.map((s) => (
+            <p key={s.source + '|' + s.medium}>
+              <b>
+                {s.source}: конверсия {s.previous}% → {s.current}% ({s.change_pp > 0 ? '+' : ''}
+                {s.change_pp} п.п.)
+              </b>{' '}
+              · {s.visits} визитов сейчас, {s.previous_visits} ранее.{' '}
+              <button
+                className="textButton"
+                onClick={() => go('reports', 'sources', { source: s.source, medium: s.medium })}
+              >
+                Исследовать источники ↗
+              </button>
+            </p>
+          ))
+        ) : (
+          <p className="hint">
+            {signals.loading
+              ? 'Сравниваем…'
+              : 'Сигналов по выбранным условиям нет. Нужно минимум 100 визитов в каждом периоде, 10 суммарных целевых визитов и заметное изменение конверсии.'}
+          </p>
+        )}
+        {signals.error && <p className="error">{signals.error}</p>}
+      </section>
       <div className="twoColumns">
         <section className="card">
           <div className="cardHeading">
             <h2>Источники трафика</h2>
-            <button className="textButton" onClick={() => go('reports')}>
+            <button className="textButton" onClick={() => go('reports', 'sources')}>
               Все источники <ChevronRight size={15} />
             </button>
           </div>
@@ -951,7 +1254,7 @@ function Overview({ data, base, query, version, go }) {
         <section className="card">
           <div className="cardHeading">
             <h2>Популярные страницы</h2>
-            <button className="textButton" onClick={() => go('reports')}>
+            <button className="textButton" onClick={() => go('reports', 'pages')}>
               Все страницы <ChevronRight size={15} />
             </button>
           </div>
@@ -996,7 +1299,7 @@ const reportOptions = [
   ['errors', 'Ошибки JavaScript'],
   ['retention', 'Возвращаемость по неделям'],
 ]
-function Reports({ base, query, version, report, setReport }) {
+function Reports({ base, query, version, report, setReport, drill }) {
   const { data, error, loading } = useData(base + '/reports/' + report + query, version)
   let columns = [
     { key: 'label', label: reportOptions.find((r) => r[0] === report)?.[1] || 'Группа' },
@@ -1063,14 +1366,35 @@ function Reports({ base, query, version, report, setReport }) {
       ) : loading ? (
         <div className="loading">Загрузка отчёта…</div>
       ) : (
-        <Table rows={data} columns={columns} />
+        <Table
+          rows={data}
+          columns={columns}
+          onRow={
+            [
+              'sources',
+              'campaigns',
+              'pages',
+              'entry',
+              'exit',
+              'devices',
+              'browsers',
+              'os',
+              'countries',
+            ].includes(report)
+              ? drill
+              : undefined
+          }
+        />
       )}
     </section>
   )
 }
 function Visits({ base, query, version, select, replay }) {
-  const { data, error } = useData(base + '/visits' + query, version),
-    [search, setSearch] = useState('')
+  const [search, setSearch] = useState('')
+  const { data, error, loading } = useData(
+    base + '/visits' + query + '&search=' + encodeURIComponent(search),
+    version,
+  )
   return (
     <section className="card">
       <div className="cardHeading">
@@ -1088,15 +1412,13 @@ function Visits({ base, query, version, select, replay }) {
           />
         </label>
       </div>
-      {error ? (
+      {loading ? (
+        <div className="loading">Загружаем визиты…</div>
+      ) : error ? (
         <p className="error">{error}</p>
       ) : (
         <Table
-          rows={data?.filter((v) =>
-            (v.source + ' ' + v.entry + ' ' + v.visitor)
-              .toLowerCase()
-              .includes(search.toLowerCase()),
-          )}
+          rows={data}
           onRow={select}
           columns={[
             { key: 'started', label: 'Начало визита', render: date },
@@ -1160,11 +1482,16 @@ function Replay({ events }) {
     </>
   )
 }
-function VisitDetail({ base, visit, close }) {
-  const detail = useData(base + '/visits/' + visit.id),
-    recording = useData(visit.has_replay ? base + '/visits/' + visit.id + '/replay' : null)
+function VisitDetail({ base, visit: initial, close }) {
+  const detail = useData(base + '/visits/' + initial.id),
+    recording = useData(base + '/visits/' + initial.id + '/replay'),
+    visit = detail.data?.visit || initial
   return (
-    <Modal title={'Визит · ' + date(visit.started)} close={close} wide>
+    <Modal
+      title={'Визит · ' + (visit.started ? date(visit.started) : 'Загрузка…')}
+      close={close}
+      wide
+    >
       <div className="visitMeta">
         <span>{visit.source}</span>
         <span>
@@ -1190,7 +1517,9 @@ function VisitDetail({ base, visit, close }) {
           .filter((e) => e.type !== 'heartbeat' && e.type !== 'scroll')
           .map((e) => (
             <div key={e.id}>
-              <time>{new Date(e.ts).toLocaleTimeString('ru-RU')}</time>
+              <time>
+                {new Date(e.ts).toLocaleTimeString('ru-RU', { timeZone: reportTimezone })}
+              </time>
               <span className="badge">{e.type}</span>
               <b>{e.name || e.path}</b>
             </div>
@@ -1200,7 +1529,9 @@ function VisitDetail({ base, visit, close }) {
   )
 }
 function Goals({ base, query, version, add, remove, editable }) {
-  const { data } = useData(base + '/goals' + query, version)
+  const { data, loading, error } = useData(base + '/goals' + query, version)
+  if (loading) return <div className="loading">Загружаем цели…</div>
+  if (error) return <p className="error">{error}</p>
   return (
     <section className="card">
       <div className="cardHeading">
@@ -1255,12 +1586,215 @@ function Goals({ base, query, version, add, remove, editable }) {
     </section>
   )
 }
-function Funnels({ base, query, version, add, remove, editable }) {
-  const { data } = useData(base + '/funnels' + query, version)
+function SegmentRules({ value, onChange }) {
+  const parse = (value) => {
+    try {
+      return value ? JSON.parse(value) : { mode: 'all', rules: [] }
+    } catch {
+      return { mode: 'all', rules: [] }
+    }
+  }
+  const [draft, setDraft] = useState(() => parse(value))
+  useEffect(() => setDraft(parse(value)), [value])
+  const update = (i, patch) =>
+    setDraft((c) => ({ ...c, rules: c.rules.map((r, n) => (n === i ? { ...r, ...patch } : r)) }))
+  return (
+    <details className="advancedSegment">
+      <summary>Дополнительные условия · {draft.rules.length}</summary>
+      <label>
+        Совпадение{' '}
+        <select
+          aria-label="Логика сегмента"
+          value={draft.mode}
+          onChange={(e) => setDraft((c) => ({ ...c, mode: e.target.value }))}
+        >
+          <option value="all">Все условия (И)</option>
+          <option value="any">Любое условие (ИЛИ)</option>
+        </select>
+      </label>
+      {draft.rules.map((r, i) => (
+        <div className="segmentRule" key={i}>
+          <select
+            aria-label={`Поле условия ${i + 1}`}
+            value={r.field}
+            onChange={(e) => update(i, { field: e.target.value })}
+          >
+            {Object.entries({
+              source: 'Источник',
+              medium: 'Канал',
+              campaign: 'Кампания',
+              device: 'Устройство',
+              browser: 'Браузер',
+              os: 'ОС',
+              country: 'Страна',
+              path: 'Страница',
+              event: 'Событие',
+              event_param: 'Параметр события',
+            }).map(([id, name]) => (
+              <option key={id} value={id}>
+                {name}
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label={`Оператор условия ${i + 1}`}
+            value={r.op}
+            onChange={(e) => update(i, { op: e.target.value })}
+          >
+            <option value="equals">Равно</option>
+            <option value="contains">Содержит</option>
+            <option value="not">Не равно / не было</option>
+          </select>
+          {r.field === 'event_param' && (
+            <>
+              <input
+                aria-label={`Ключ параметра ${i + 1}`}
+                placeholder="plan"
+                value={r.key || ''}
+                onChange={(e) => update(i, { key: e.target.value })}
+              />
+              <input
+                aria-label={`Событие параметра ${i + 1}`}
+                placeholder="Имя события (необязательно)"
+                value={r.event || ''}
+                onChange={(e) => update(i, { event: e.target.value })}
+              />
+            </>
+          )}
+          <input
+            aria-label={`Значение условия ${i + 1}`}
+            value={r.value}
+            onChange={(e) => update(i, { value: e.target.value })}
+          />
+          <button
+            className="icon"
+            aria-label={`Удалить условие ${i + 1}`}
+            onClick={() => setDraft((c) => ({ ...c, rules: c.rules.filter((_, n) => n !== i) }))}
+          >
+            <X size={14} />
+          </button>
+        </div>
+      ))}
+      <div className="inlineForm">
+        <button
+          className="button"
+          disabled={draft.rules.length >= 20}
+          onClick={() =>
+            setDraft((c) => ({
+              ...c,
+              rules: [...c.rules, { field: 'source', op: 'equals', value: '' }],
+            }))
+          }
+        >
+          Добавить условие
+        </button>
+        <button
+          className="yellow"
+          disabled={draft.rules.some((r) => !r.value || (r.field === 'event_param' && !r.key))}
+          onClick={() => onChange(draft.rules.length ? JSON.stringify(draft) : '')}
+        >
+          Применить условия
+        </button>
+      </div>
+      <p className="hint">
+        Условия выделяют визиты. Для параметра события ключ и значение проверяются в одном событии;
+        имя события можно уточнить.
+      </p>
+    </details>
+  )
+}
+function FunnelFields({ initial, options }) {
+  const [steps, setSteps] = useState(
+    initial?.steps?.map(({ kind, value }) => ({ kind, value })) || [
+      { kind: 'page', value: '/' },
+      { kind: 'event', value: 'lead_sent' },
+    ],
+  )
+  return (
+    <>
+      <Field label="Считать путь">
+        <select name="scope" defaultValue={initial?.scope || 'visitor'}>
+          <option value="visitor">Человек между визитами</option>
+          <option value="visit">Один визит</option>
+        </select>
+      </Field>
+      <Field label="Окно конверсии">
+        <select name="window_days" defaultValue={initial?.window_days || 30}>
+          {[1, 7, 30, 90].map((n) => (
+            <option value={n} key={n}>
+              {n} дней
+            </option>
+          ))}
+        </select>
+      </Field>
+      <input type="hidden" name="steps" value={JSON.stringify(steps)} />
+      <datalist id="funnel-pages">
+        {options?.pages.map((p) => (
+          <option key={p}>{p}</option>
+        ))}
+      </datalist>
+      <datalist id="funnel-events">
+        {options?.events.map((p) => (
+          <option key={p}>{p}</option>
+        ))}
+      </datalist>
+      {steps.map((step, i) => (
+        <div className="funnelEditorRow" key={i}>
+          <b>{i + 1}</b>
+          <select
+            aria-label={`Тип шага ${i + 1}`}
+            value={step.kind}
+            onChange={(e) =>
+              setSteps((a) => a.map((s, n) => (n === i ? { kind: e.target.value, value: '' } : s)))
+            }
+          >
+            <option value="page">Страница</option>
+            <option value="event">Событие</option>
+          </select>
+          <input
+            aria-label={`Условие шага ${i + 1}`}
+            list={step.kind === 'page' ? 'funnel-pages' : 'funnel-events'}
+            value={step.value}
+            onChange={(e) =>
+              setSteps((a) => a.map((s, n) => (n === i ? { ...s, value: e.target.value } : s)))
+            }
+            placeholder={step.kind === 'page' ? '/pricing' : 'lead_sent'}
+            required
+          />
+          <button
+            type="button"
+            className="icon"
+            aria-label={`Удалить шаг ${i + 1}`}
+            disabled={steps.length <= 2}
+            onClick={() => setSteps((a) => a.filter((_, n) => n !== i))}
+          >
+            <X size={15} />
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        className="button"
+        disabled={steps.length >= 10}
+        onClick={() => setSteps((a) => [...a, { kind: 'event', value: '' }])}
+      >
+        Добавить шаг
+      </button>
+      <p className="hint">
+        Условия точные. Для межвизитного пути период определяет входы; завершения учитываются до
+        конца окна, но не позже текущего момента. Объединение устройств не выполняется.
+      </p>
+    </>
+  )
+}
+function Funnels({ base, query, version, add, remove, editable, edit, select }) {
+  const { data, loading, error } = useData(base + '/funnels' + query, version)
+  if (loading) return <div className="loading">Загружаем воронки…</div>
+  if (error) return <p className="error">{error}</p>
   return (
     <>
       <div className="sectionActions">
-        <p className="muted">Последовательность действий внутри одного визита</p>
+        <p className="muted">Путь посетителя: внутри визита или между повторными визитами</p>
         {editable && (
           <button className="yellow" onClick={add}>
             <Plus size={16} />
@@ -1279,13 +1813,30 @@ function Funnels({ base, query, version, add, remove, editable }) {
       {data?.map((f) => (
         <section className="card" key={f.id}>
           <div className="cardHeading">
-            <h2>{f.name}</h2>
+            <div>
+              <h2>{f.name}</h2>
+              <p>
+                {f.scope === 'visitor'
+                  ? `Один посетитель · окно ${f.window_days} дней · входы выбранного периода`
+                  : 'Внутри одного визита'}
+              </p>
+            </div>
+            {editable && (
+              <button className="button" onClick={() => edit(f)}>
+                Редактировать
+              </button>
+            )}
             {editable && (
               <button className="icon" aria-label="Удалить воронку" onClick={() => remove(f.id)}>
                 <Trash2 size={16} />
               </button>
             )}
           </div>
+          {f.truncated && (
+            <p className="notice">
+              Воронка ограничена первыми 100 000 событий, результат неполный. Сузьте период.
+            </p>
+          )}
           <div className="funnelSteps">
             {f.steps.map((s, i) => (
               <div key={i}>
@@ -1298,6 +1849,17 @@ function Funnels({ base, query, version, add, remove, editable }) {
                   />
                 </div>
                 <span>{i ? fmt(s.conversion) + '% с прошлого шага' : '100% входов'}</span>
+                {i > 0 && <small>{fmt(s.from_start)}% от входов</small>}
+                {s.dropoff > 0 && (
+                  <details>
+                    <summary>Ушли: {fmt(s.dropoff)}</summary>
+                    {s.dropoff_visits.map((id) => (
+                      <button className="textButton" key={id} onClick={() => select(id)}>
+                        Визит {id.slice(-8)} ↗
+                      </button>
+                    ))}
+                  </details>
+                )}
               </div>
             ))}
           </div>
@@ -1307,12 +1869,40 @@ function Funnels({ base, query, version, add, remove, editable }) {
   )
 }
 function Maps({ base, query, version }) {
-  const { data } = useData(base + '/behavior' + query, version),
+  const [page, setPage] = useState(new URLSearchParams(query).get('path') || '')
+  const options = useData(base + '/options', version)
+  const mapQuery = query + '&mapPath=' + encodeURIComponent(page)
+  const { data, loading, error } = useData(page ? base + '/behavior' + mapQuery : null, version),
     [tab, setTab] = useState('clicks'),
     [overlay, setOverlay] = useState(true)
-  const snapshot = useData(tab === 'clicks' ? base + '/map-snapshot' + query : null, version)
+  const snapshot = useData(
+    tab === 'clicks' && page ? base + '/map-snapshot' + mapQuery : null,
+    version,
+  )
   return (
     <section className="card">
+      <div className="reportToolbar">
+        <label>
+          Страница карты{' '}
+          <select
+            aria-label="Страница карты"
+            value={page}
+            onChange={(e) => setPage(e.target.value)}
+          >
+            <option value="">Выберите страницу</option>
+            {options.data?.pages.map((p) => (
+              <option key={p}>{p}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+      {!page && (
+        <p className="notice">
+          Выберите конкретную страницу: события разных страниц не смешиваются.
+        </p>
+      )}
+      {loading && <div className="loading">Загружаем карту…</div>}
+      {error && <p className="error">{error}</p>}
       <div className="tabs">
         {[
           ['clicks', 'Клики'],
@@ -1334,8 +1924,8 @@ function Maps({ base, query, version }) {
             <div>
               <h2>Карта кликов</h2>
               <p>
-                Нормализованные координаты по ширине и высоте документа. Для одной страницы задайте
-                сегмент «Страница».
+                Нормализованные координаты по ширине и высоте документа. События только выбранной
+                страницы карты.
               </p>
             </div>
             <span className="badge">{fmt(data?.clicks.length)} кликов</span>
@@ -1431,7 +2021,8 @@ function Maps({ base, query, version }) {
               { key: 'path', label: 'Страница' },
               { key: 'starts', label: 'Начали' },
               { key: 'submits', label: 'Отправили' },
-              { key: 'conversion', label: 'Конверсия', render: (n) => fmt(n) + '%' },
+              { key: 'conversion', label: 'Завершили из начавших', render: (n) => fmt(n) + '%' },
+              { key: 'untracked_starts', label: 'Отправили без начала' },
             ]}
           />
           <p className="notice">
@@ -1444,7 +2035,11 @@ function Maps({ base, query, version }) {
   )
 }
 function Commerce({ base, query, version }) {
-  const { data, error } = useData(base + '/ecommerce' + query, version)
+  const [basis, setBasis] = useState('order')
+  const { data, error, loading } = useData(
+    base + '/ecommerce' + query + '&dateBasis=' + basis,
+    version,
+  )
   return (
     <>
       <div className="metrics commerceMetrics">
@@ -1458,7 +2053,20 @@ function Commerce({ base, query, version }) {
       </div>
       <section className="card">
         <div className="cardHeading">
-          <h2>Покупки</h2>
+          <div>
+            <h2>Покупки</h2>
+            <label>
+              Период по{' '}
+              <select
+                aria-label="Дата ecommerce"
+                value={basis}
+                onChange={(e) => setBasis(e.target.value)}
+              >
+                <option value="order">дате заказа</option>
+                <option value="visit">дате визита</option>
+              </select>
+            </label>
+          </div>
           <span className="muted">Последние 5 000 заказов</span>
         </div>
         {error && <p className="error">{error}</p>}
@@ -1499,7 +2107,7 @@ function Commerce({ base, query, version }) {
   )
 }
 function Acquisition({ base, query, version, mutate, notify, editable }) {
-  const { data, error } = useData(base + '/acquisition' + query, version)
+  const { data, error, loading } = useData(base + '/acquisition' + query, version)
   const importFile = async (event) => {
     const file = event.target.files?.[0]
     if (!file) return
@@ -1520,7 +2128,10 @@ function Acquisition({ base, query, version, mutate, notify, editable }) {
         <div className="cardHeading">
           <div>
             <h2>Расходы и выручка по источникам</h2>
-            <p>Доходы из ecommerce. Расходы — из вашего импорта. Валюты считаются отдельно.</p>
+            <p>
+              Доходы из ecommerce по дате заказа. Расходы — из вашего импорта. Валюты считаются
+              отдельно.
+            </p>
           </div>
         </div>
         {error ? (
@@ -1532,7 +2143,11 @@ function Acquisition({ base, query, version, mutate, notify, editable }) {
               { key: 'source', label: 'Источник' },
               { key: 'campaign', label: 'Кампания' },
               { key: 'visits', label: 'Визиты' },
-              { key: 'cost', label: 'Расходы' },
+              {
+                key: 'cost',
+                label: 'Расходы',
+                render: (n, r) => (r.has_cost ? fmt(n) : 'Не загружены'),
+              },
               { key: 'revenue', label: 'Выручка' },
               { key: 'orders', label: 'Заказы' },
               { key: 'roas', label: 'ROAS', render: (n) => (n === null ? '—' : fmt(n) + '×') },
@@ -1561,10 +2176,15 @@ function Acquisition({ base, query, version, mutate, notify, editable }) {
             }}
           >
             <Field
-              label="Дата (UTC)"
+              label="Дата в часовом поясе счётчика"
               type="date"
               name="day"
-              defaultValue={new Date().toISOString().slice(0, 10)}
+              defaultValue={new Intl.DateTimeFormat('en-CA', {
+                timeZone: reportTimezone,
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+              }).format(new Date())}
               required
             />
             <Field
@@ -1598,11 +2218,14 @@ function Acquisition({ base, query, version, mutate, notify, editable }) {
   )
 }
 function SettingsPage({ site, base, version, mutate, notify, readOnly }) {
+  const [diagnosticVersion, refreshDiagnostic] = useState(0)
   const [tab, setTab] = useState('code'),
     [token, setToken] = useState(''),
     [copied, setCopied] = useState(false)
   const members = useData(site.role === 'owner' ? base + '/members' : null, version),
-    keys = useData(site.role === 'owner' ? base + '/keys' : null, version)
+    keys = useData(site.role === 'owner' ? base + '/keys' : null, version),
+    goals = useData(base + '/goals?days=366', version),
+    diagnostics = useData(base + '/diagnostics', version + diagnosticVersion)
   const owner = site.role === 'owner' && !readOnly,
     snippet = `<script defer src="${location.origin}/om.js" data-site="${site.id}"${site.replay ? ' data-replay="true"' : ''}></script>`
   return (
@@ -1623,6 +2246,17 @@ function SettingsPage({ site, base, version, mutate, notify, readOnly }) {
       {tab === 'code' && (
         <div className="settingsBody">
           <h2>Подключение к сайту</h2>
+          <div className="notice">
+            <b>{diagnostics.data?.last_seen ? 'События поступают' : 'Ожидаем первое событие'}</b>
+            <p>
+              Последнее событие:{' '}
+              {diagnostics.data?.last_seen ? date(diagnostics.data.last_seen) : 'не получено'}.
+              Записано сессий: {diagnostics.data?.recordings ?? '—'}.
+            </p>
+            <button className="button" onClick={() => refreshDiagnostic((v) => v + 1)}>
+              Проверить поступление
+            </button>
+          </div>
           <p className="muted">
             Разместите код перед закрывающим тегом &lt;/head&gt; на всех страницах сайта.
           </p>
@@ -1673,12 +2307,31 @@ function SettingsPage({ site, base, version, mutate, notify, readOnly }) {
               name: f.name,
               domains: f.domains.split(',').map((s) => s.trim()),
               replay: f.replay === 'on',
+              primary_goal: f.primary_goal,
+              timezone: f.timezone,
             })
               .then(() => notify('Настройки сохранены'))
               .catch(() => {})
           }}
         >
           <Field label="Название" name="name" defaultValue={site.name} required />
+          <Field label="Основная цель">
+            <select name="primary_goal" defaultValue={site.primary_goal || ''}>
+              <option value="">Не выбрана — любая цель</option>
+              {goals.data?.map((g) => (
+                <option value={g.id} key={g.id}>
+                  {g.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field
+            label="Часовой пояс"
+            name="timezone"
+            defaultValue={site.timezone || 'UTC'}
+            placeholder="Europe/Moscow"
+            required
+          />
           <Field
             label="Разрешённые домены через запятую"
             name="domains"

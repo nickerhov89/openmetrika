@@ -15,6 +15,7 @@ import {
   cleanPath,
   csv,
   visitFilter,
+  validDate,
 } from './core.js'
 import { ingest, ingestReplay } from './ingest.js'
 import {
@@ -27,7 +28,9 @@ import {
   commerceReport,
   acquisitionReport,
   mapSnapshot,
+  insights,
 } from './reports.js'
+import { importBusiness, businessReport } from './business.js'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const wrap = (handler) => (req, res, next) => {
@@ -99,7 +102,7 @@ export function createApp({ db = openDatabase(), demo = false, readOnly = false 
     })
     res.sendFile(resolve(root, 'public/om.js'))
   })
-  app.get('/api/health', (req, res) => res.json({ ok: true, version: '0.1.0' }))
+  app.get('/api/health', (req, res) => res.json({ ok: true, version: '0.2.0' }))
   app.use('/api', (req, res, next) => {
     res.set('Cache-Control', 'no-store')
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
@@ -124,6 +127,19 @@ export function createApp({ db = openDatabase(), demo = false, readOnly = false 
         .get(hash(raw), Date.now())
     const bearer = req.get('authorization')?.match(/^Bearer (.+)$/)?.[1]
     if (bearer) {
+      const integration = db
+        .prepare('SELECT * FROM integration_keys WHERE hash=?')
+        .get(hash(bearer))
+      if (integration) {
+        if (req.method !== 'POST' || req.path !== `/sites/${integration.site_id}/business/import`)
+          return res
+            .status(403)
+            .json({ error: 'Этот ключ разрешает только импорт продаж своего счётчика' })
+        req.integrationKey = integration
+        const site = db.prepare('SELECT owner_id FROM sites WHERE id=?').get(integration.site_id)
+        req.user = db.prepare('SELECT * FROM users WHERE id=?').get(site.owner_id)
+        return next()
+      }
       const key = db.prepare('SELECT * FROM api_keys WHERE hash=?').get(hash(bearer))
       if (!key || req.method !== 'GET')
         return res.status(401).json({ error: 'Недействительный ключ или ключ только для чтения' })
@@ -222,7 +238,15 @@ export function createApp({ db = openDatabase(), demo = false, readOnly = false 
   app.use('/api', (req, res, next) =>
     req.user ? next() : res.status(401).json({ error: 'Войдите в аккаунт' }),
   )
-  const siteOut = (s) => ({ ...s, domains: JSON.parse(s.domains), replay: Boolean(s.replay) })
+  const siteOut = (s) => ({
+    ...s,
+    domains: JSON.parse(s.domains),
+    replay: Boolean(s.replay),
+    ...(db.prepare('SELECT primary_goal,timezone FROM site_settings WHERE site_id=?').get(s.id) || {
+      primary_goal: '',
+      timezone: 'UTC',
+    }),
+  })
   app.get('/api/sites', (req, res) => {
     let sites = db
       .prepare(
@@ -265,6 +289,14 @@ export function createApp({ db = openDatabase(), demo = false, readOnly = false 
     )
       return res.status(403).json({ error: 'Только просмотр' })
     req.site = site
+    const settings = db
+      .prepare('SELECT primary_goal,timezone FROM site_settings WHERE site_id=?')
+      .get(site.id)
+    req.reportQuery = {
+      ...req.query,
+      timezone: settings?.timezone || 'UTC',
+      goal: req.query.goal || settings?.primary_goal || 'any',
+    }
     next()
   })
   const owner = (req, res, next) =>
@@ -277,23 +309,133 @@ export function createApp({ db = openDatabase(), demo = false, readOnly = false 
     wrap((req, res) => {
       const name = cleanText(req.body.name)
       if (!name) throw Error('Укажите название')
+      const previous = db.prepare('SELECT * FROM site_settings WHERE site_id=?').get(req.site.id)
+      const timezone = req.body.timezone ?? previous?.timezone ?? 'UTC',
+        primary = req.body.primary_goal ?? previous?.primary_goal ?? ''
+      try {
+        new Intl.DateTimeFormat('en', { timeZone: timezone }).format()
+      } catch {
+        throw Error('Неизвестный часовой пояс')
+      }
+      if (
+        primary &&
+        !db.prepare('SELECT 1 FROM goals WHERE site_id=? AND id=?').get(req.site.id, primary)
+      )
+        throw Error('Основная цель не найдена')
       db.prepare('UPDATE sites SET name=?,domains=?,replay=? WHERE id=?').run(
         name,
         JSON.stringify(normalizeDomains(req.body.domains)),
         req.body.replay ? 1 : 0,
         req.site.id,
       )
+      db.prepare(
+        'INSERT INTO site_settings VALUES(?,?,?) ON CONFLICT(site_id) DO UPDATE SET primary_goal=excluded.primary_goal,timezone=excluded.timezone',
+      ).run(req.site.id, primary, timezone)
       res.json(siteOut(db.prepare('SELECT * FROM sites WHERE id=?').get(req.site.id)))
     }),
   )
   app.get(
     '/api/sites/:siteId/overview',
-    wrap((req, res) => res.json(overview(db, req.site.id, req.query))),
+    wrap((req, res) => res.json(overview(db, req.site.id, req.reportQuery))),
   )
+  app.get(
+    '/api/sites/:siteId/insights',
+    wrap((req, res) => res.json(insights(db, req.site.id, req.reportQuery))),
+  )
+  app.get('/api/sites/:siteId/diagnostics', (req, res) => {
+    const stats = db
+      .prepare('SELECT COUNT(*) visits,MAX(ended) last_seen FROM visits WHERE site_id=?')
+      .get(req.site.id)
+    const types = db
+      .prepare(
+        'SELECT type,COUNT(*) events,MAX(ts) last_seen FROM events WHERE site_id=? GROUP BY type',
+      )
+      .all(req.site.id)
+    res.json({
+      ...stats,
+      events: types,
+      recordings: db
+        .prepare('SELECT COUNT(DISTINCT visit_id) n FROM replay_chunks WHERE site_id=?')
+        .get(req.site.id).n,
+      goals: db.prepare('SELECT id,name,kind,value FROM goals WHERE site_id=?').all(req.site.id),
+      timezone: req.reportQuery.timezone,
+    })
+  })
+  app.get('/api/sites/:siteId/options', (req, res) =>
+    res.json({
+      sources: db
+        .prepare(
+          'SELECT DISTINCT source value FROM visits WHERE site_id=? ORDER BY source LIMIT 500',
+        )
+        .all(req.site.id)
+        .map((r) => r.value),
+      campaigns: db
+        .prepare(
+          "SELECT DISTINCT campaign value FROM visits WHERE site_id=? AND campaign<>'' ORDER BY campaign LIMIT 500",
+        )
+        .all(req.site.id)
+        .map((r) => r.value),
+      pages: db
+        .prepare(
+          "SELECT DISTINCT path value FROM events WHERE site_id=? AND type='pageview' ORDER BY path LIMIT 500",
+        )
+        .all(req.site.id)
+        .map((r) => r.value),
+      events: db
+        .prepare(
+          "SELECT DISTINCT name value FROM events WHERE site_id=? AND type='event' ORDER BY name LIMIT 500",
+        )
+        .all(req.site.id)
+        .map((r) => r.value),
+    }),
+  )
+  app.get(
+    '/api/sites/:siteId/business',
+    wrap((req, res) => {
+      const report = businessReport(db, req.site.id, req.reportQuery)
+      if (req.query.format === 'csv')
+        return res.type('text/csv').attachment('openmetrika-business.csv').send(csv(report.rows))
+      res.json(report)
+    }),
+  )
+  app.post(
+    '/api/sites/:siteId/business/import',
+    (req, res, next) =>
+      req.integrationKey || req.site.role === 'owner'
+        ? next()
+        : res.status(403).json({ error: 'Импорт продаж доступен владельцу или серверному ключу' }),
+    wrap((req, res) => res.json(importBusiness(db, req.site.id, req.body))),
+  )
+  app.get('/api/sites/:siteId/integrations', owner, (req, res) =>
+    res.json(
+      db
+        .prepare('SELECT id,name,created_at FROM integration_keys WHERE site_id=?')
+        .all(req.site.id),
+    ),
+  )
+  app.post('/api/sites/:siteId/integrations', owner, (req, res) => {
+    const token = 'om_import_' + id() + id(),
+      kid = id()
+    db.prepare('INSERT INTO integration_keys VALUES(?,?,?,?,?)').run(
+      kid,
+      req.site.id,
+      hash(token),
+      cleanText(req.body.name) || 'CRM import',
+      Date.now(),
+    )
+    res.status(201).json({ id: kid, token })
+  })
+  app.delete('/api/sites/:siteId/integrations/:id', owner, (req, res) => {
+    db.prepare('DELETE FROM integration_keys WHERE site_id=? AND id=?').run(
+      req.site.id,
+      req.params.id,
+    )
+    res.json({ ok: true })
+  })
   app.get(
     '/api/sites/:siteId/reports/:dimension',
     wrap((req, res) => {
-      const rows = breakdown(db, req.site.id, req.query, req.params.dimension)
+      const rows = breakdown(db, req.site.id, req.reportQuery, req.params.dimension)
       if (req.query.format === 'csv')
         return res.type('text/csv').attachment('openmetrika-report.csv').send(csv(rows))
       res.json(rows)
@@ -301,7 +443,7 @@ export function createApp({ db = openDatabase(), demo = false, readOnly = false 
   )
   app.get(
     '/api/sites/:siteId/visits',
-    wrap((req, res) => res.json(visitsReport(db, req.site.id, req.query))),
+    wrap((req, res) => res.json(visitsReport(db, req.site.id, req.reportQuery))),
   )
   app.get(
     '/api/sites/:siteId/visits/:visitId',
@@ -337,7 +479,7 @@ export function createApp({ db = openDatabase(), demo = false, readOnly = false 
   })
   app.get(
     '/api/sites/:siteId/goals',
-    wrap((req, res) => res.json(goalReport(db, req.site.id, req.query))),
+    wrap((req, res) => res.json(goalReport(db, req.site.id, req.reportQuery))),
   )
   app.post(
     '/api/sites/:siteId/goals',
@@ -358,6 +500,10 @@ export function createApp({ db = openDatabase(), demo = false, readOnly = false 
   )
   app.delete('/api/sites/:siteId/goals/:goalId', (req, res) => {
     db.prepare('DELETE FROM goals WHERE site_id=? AND id=?').run(req.site.id, req.params.goalId)
+    db.prepare("UPDATE site_settings SET primary_goal='' WHERE site_id=? AND primary_goal=?").run(
+      req.site.id,
+      req.params.goalId,
+    )
     res.json({ ok: true })
   })
   app.get(
@@ -367,7 +513,7 @@ export function createApp({ db = openDatabase(), demo = false, readOnly = false 
         db
           .prepare('SELECT * FROM funnels WHERE site_id=?')
           .all(req.site.id)
-          .map((f) => funnelReport(db, req.site.id, req.query, f)),
+          .map((f) => funnelReport(db, req.site.id, req.reportQuery, f)),
       ),
     ),
   )
@@ -384,6 +530,10 @@ export function createApp({ db = openDatabase(), demo = false, readOnly = false 
       )
         throw Error('Воронка должна содержать 2–10 шагов')
       const fid = id()
+      const scope = req.body.scope || 'visit',
+        days = req.body.window_days === undefined ? 30 : Number(req.body.window_days)
+      if (!['visit', 'visitor'].includes(scope) || ![1, 7, 30, 90].includes(days))
+        throw Error('Окно воронки: 1, 7, 30 или 90 дней')
       db.prepare('INSERT INTO funnels VALUES(?,?,?,?)').run(
         fid,
         req.site.id,
@@ -395,7 +545,53 @@ export function createApp({ db = openDatabase(), demo = false, readOnly = false 
           })),
         ),
       )
+      db.prepare('INSERT INTO funnel_settings VALUES(?,?,?)').run(fid, scope, days)
       res.status(201).json({ id: fid })
+    }),
+  )
+  app.patch(
+    '/api/sites/:siteId/funnels/:id',
+    wrap((req, res) => {
+      if (
+        !db
+          .prepare('SELECT 1 FROM funnels WHERE site_id=? AND id=?')
+          .get(req.site.id, req.params.id)
+      )
+        return res.status(404).json({ error: 'Воронка не найдена' })
+      const { name, steps, scope, window_days } = req.body,
+        days = window_days === undefined ? 30 : Number(window_days)
+      if (
+        !cleanText(name) ||
+        !Array.isArray(steps) ||
+        steps.length < 2 ||
+        steps.length > 10 ||
+        steps.some((s) => !['page', 'event'].includes(s.kind) || !cleanText(s.value)) ||
+        !['visit', 'visitor'].includes(scope) ||
+        ![1, 7, 30, 90].includes(days)
+      )
+        throw Error('Неверная конфигурация воронки')
+      db.exec('BEGIN')
+      try {
+        db.prepare('UPDATE funnels SET name=?,steps=? WHERE site_id=? AND id=?').run(
+          cleanText(name),
+          JSON.stringify(
+            steps.map((s) => ({
+              kind: s.kind,
+              value: s.kind === 'page' ? cleanPath(s.value) : cleanText(s.value, 150),
+            })),
+          ),
+          req.site.id,
+          req.params.id,
+        )
+        db.prepare(
+          'INSERT INTO funnel_settings VALUES(?,?,?) ON CONFLICT(funnel_id) DO UPDATE SET scope=excluded.scope,window_days=excluded.window_days',
+        ).run(req.params.id, scope, days)
+        db.exec('COMMIT')
+      } catch (e) {
+        db.exec('ROLLBACK')
+        throw e
+      }
+      res.json({ ok: true })
     }),
   )
   app.delete('/api/sites/:siteId/funnels/:id', (req, res) => {
@@ -404,19 +600,19 @@ export function createApp({ db = openDatabase(), demo = false, readOnly = false 
   })
   app.get(
     '/api/sites/:siteId/behavior',
-    wrap((req, res) => res.json(behavior(db, req.site.id, req.query))),
+    wrap((req, res) => res.json(behavior(db, req.site.id, req.reportQuery))),
   )
   app.get(
     '/api/sites/:siteId/map-snapshot',
-    wrap((req, res) => res.json(mapSnapshot(db, req.site.id, req.query))),
+    wrap((req, res) => res.json(mapSnapshot(db, req.site.id, req.reportQuery))),
   )
   app.get(
     '/api/sites/:siteId/ecommerce',
-    wrap((req, res) => res.json(commerceReport(db, req.site.id, req.query))),
+    wrap((req, res) => res.json(commerceReport(db, req.site.id, req.reportQuery))),
   )
   app.get(
     '/api/sites/:siteId/acquisition',
-    wrap((req, res) => res.json(acquisitionReport(db, req.site.id, req.query))),
+    wrap((req, res) => res.json(acquisitionReport(db, req.site.id, req.reportQuery))),
   )
   app.post(
     '/api/sites/:siteId/costs',
@@ -426,8 +622,7 @@ export function createApp({ db = openDatabase(), demo = false, readOnly = false 
         throw Error('Ожидается до 10000 строк расходов')
       const rows = req.body.rows.map((r) => {
         if (
-          !/^\d{4}-\d{2}-\d{2}$/.test(r.day) ||
-          Number.isNaN(Date.parse(r.day)) ||
+          !validDate(r.day) ||
           !cleanText(r.source) ||
           !Number.isFinite(Number(r.amount)) ||
           Number(r.amount) < 0 ||
@@ -484,6 +679,35 @@ export function createApp({ db = openDatabase(), demo = false, readOnly = false 
       res.status(201).json({ id: rid })
     }),
   )
+  app.patch(
+    '/api/sites/:siteId/saved/:id',
+    wrap((req, res) => {
+      if (
+        !cleanText(req.body.name) ||
+        !req.body.config ||
+        JSON.stringify(req.body.config).length > 4000
+      )
+        throw Error('Некорректный отчёт')
+      const result = db
+        .prepare('UPDATE saved_reports SET name=?,config=? WHERE site_id=? AND user_id=? AND id=?')
+        .run(
+          cleanText(req.body.name),
+          JSON.stringify(req.body.config),
+          req.site.id,
+          req.user.id,
+          req.params.id,
+        )
+      if (!result.changes) return res.status(404).json({ error: 'Отчёт не найден' })
+      res.json({ ok: true })
+    }),
+  )
+  app.delete('/api/sites/:siteId/business/leads/:leadId', owner, (req, res) => {
+    db.prepare('DELETE FROM business_leads WHERE site_id=? AND id=?').run(
+      req.site.id,
+      req.params.leadId,
+    )
+    res.json({ ok: true })
+  })
   app.delete('/api/sites/:siteId/saved/:id', (req, res) => {
     db.prepare('DELETE FROM saved_reports WHERE site_id=? AND user_id=? AND id=?').run(
       req.site.id,

@@ -7,8 +7,12 @@ the counter, it is not an admin key. Allowed domains are exact hostnames includi
 non-default ports. Add `example.com` and `www.example.com` separately if necessary.
 
 ```html
-<script defer src="https://analytics.example.com/om.js"
-  data-site="SITE_ID" data-replay="true"></script>
+<script
+  defer
+  src="https://analytics.example.com/om.js"
+  data-site="SITE_ID"
+  data-replay="true"
+></script>
 ```
 
 `data-host` optionally sets the collector origin when om.js is served elsewhere.
@@ -19,21 +23,30 @@ The dashboard should be served at an origin root, not a rewritten subdirectory.
 ## Consent and private content
 
 ```html
-<script defer src="https://analytics.example.com/om.js"
-  data-site="SITE_ID" data-consent="required" data-replay="true"></script>
+<script
+  defer
+  src="https://analytics.example.com/om.js"
+  data-site="SITE_ID"
+  data-consent="required"
+  data-replay="true"
+></script>
 ```
 
 Call after the tracker loads:
 
 ```js
-om('consent', true)   // Begin collection after permission
-om('consent', false)  // Stop collection and clear this site's stored identifiers
+om('consent', true) // Begin collection after permission
+om('consent', false) // Stop collection and clear this site's stored identifiers
 ```
 
 For commands before load, define a queue in your own first-party bundle:
 
 ```js
-window.om = window.om || function (...args) { (window.om.q ||= []).push(args) }
+window.om =
+  window.om ||
+  function (...args) {
+    ;(window.om.q ||= []).push(args)
+  }
 ```
 
 No session is created until tracking is enabled. DNT=1 and GPC=true prevent start,
@@ -70,8 +83,11 @@ goal for successful submissions. Conversion rates count unique sessions.
 
 ```js
 om('ecommerce', {
-  action: 'purchase', order_id: 'ORD-123', revenue: 5000, currency: 'RUB',
-  items: [{ id: 'audit', name: 'Website audit', price: 5000, quantity: 1 }]
+  action: 'purchase',
+  order_id: 'ORD-123',
+  revenue: 5000,
+  currency: 'RUB',
+  items: [{ id: 'audit', name: 'Website audit', price: 5000, quantity: 1 }],
 })
 ```
 
@@ -107,28 +123,30 @@ curl -H "Authorization: Bearer $OPENMETRIKA_API_KEY" \
 
 GET endpoints (all under `/api/sites/:siteId/`):
 
-| Path | Result |
-|---|---|
-| `overview` | Current/previous KPIs, daily visits, live users, currency revenue |
+| Path                 | Result                                                                                 |
+| -------------------- | -------------------------------------------------------------------------------------- |
+| `overview`           | Current/previous KPIs, daily visits, live users, currency revenue                      |
 | `reports/:dimension` | Source/campaign/page/entry/exit/device/browser/OS/country/event/performance/error rows |
-| `visits` | Latest 250 matching sessions |
-| `visits/:id` | Session and up to 5,000 chronological events |
-| `visits/:id/replay` | Ordered rrweb events |
-| `goals` | Goal completion and conversion counts |
-| `funnels` | Ordered within-session funnel counts |
-| `behavior` | Click/scroll/link/form aggregates |
-| `map-snapshot` | A matching recorded DOM snapshot for click overlays |
-| `ecommerce` | Full revenue totals, orders (latest 5,000), product aggregates |
-| `acquisition` | Imported costs, tracked revenue, ROAS and CPA |
+| `visits`             | Latest 250 matching sessions                                                           |
+| `visits/:id`         | Session and up to 5,000 chronological events                                           |
+| `visits/:id/replay`  | Ordered rrweb events                                                                   |
+| `goals`              | Goal completion and conversion counts                                                  |
+| `funnels`            | Ordered session/visitor funnel counts and drop-off samples                             |
+| `behavior`           | Click/scroll/link/form aggregates                                                      |
+| `map-snapshot`       | A matching recorded DOM snapshot for click overlays                                    |
+| `ecommerce`          | Full revenue totals, orders (latest 5,000), product aggregates                         |
+| `acquisition`        | Imported costs, tracked revenue, ROAS and CPA                                          |
 
 Dimensions: `sources`, `campaigns`, `pages`, `entry`, `exit`, `devices`, `browsers`,
 `os`, `countries`, `events`, `performance`, `errors`, `retention`. Add `format=csv` to a dimension
 report for spreadsheet-safe CSV. Spreadsheet formula prefixes are escaped.
 
-Filters: `days=1|7|30|90` or `from=YYYY-MM-DD&to=YYYY-MM-DD` (UTC, maximum 366 days),
+Filters: `days=1|7|30|90` or `from=YYYY-MM-DD&to=YYYY-MM-DD` (counter timezone, maximum 366 days),
 `source`, `medium`, `campaign`, `device`, `browser`, `os`, `country`, exact page
-`path`, `converted=1`, `replay=1`. Date filtering selects sessions by start time;
-all their events contribute to that session's metrics.
+`path` (`pathOp=exact|contains|exclude`), `goal=GOAL_ID|any`, `converted=1`, `replay=1`. Date filtering selects sessions by start time;
+all their events contribute to that session's metrics. Behavior maps additionally isolate
+`mapPath` (or an exact `path`) at the event level. Ecommerce defaults to order dates;
+`dateBasis=visit` explicitly selects the old visit-date behavior.
 
 API keys cannot modify settings, manage users or issue new keys. The dashboard uses
 cookie sessions for mutations with same-origin checks. Public collector endpoints
@@ -147,3 +165,34 @@ The click map overlays normalized document coordinates onto a stored rrweb DOM s
 use privacy classes around sensitive content.
 
 Weekly retention groups first-ever visitors by UTC Monday and shows their return in weeks 0–8. Future weeks are blank; incomplete weeks are not forecasts. Retention processes at most 100,000 matching visits; narrow the period on busy sites. Performance reports show arithmetic means of per-visit/page measurements, not P75 Core Web Vitals.
+
+## v0.2 business and analysis additions
+
+- Set `primary_goal` and an IANA `timezone` using the owner settings form or PATCH
+  `/api/sites/:siteId`. Unspecified settings survive later partial updates.
+- `goal=any` explicitly combines goals; otherwise selected/primary goal controls
+  conversion rates and `converted=1`.
+- `compareFrom` and `compareTo` select the comparison period for overview/insights.
+- `conditions` accepts JSON `{ "mode":"all", "rules":[...] }`; `any` gives OR.
+  Up to 20 rules support `field`, `op=equals|contains|not`, `value`; fields are
+  source/medium/campaign/device/browser/os/country/path/event/event_param. For
+  event_param add `key` and optionally `event`; key/value/name match one event.
+  All rules select visits, not individual hits. Values are SQL parameters.
+- `search` searches visit history before applying the latest-250 display limit.
+- POST/PATCH funnels accept 2–10 `{kind:page|event,value}` steps,
+  `scope=visit|visitor`, `window_days=1|7|30|90`. Period/segment select eligible
+  entries. Visitor completions may occur later within the window, through now.
+  One event cannot satisfy two steps; repeated entries are handled as overlapping
+  attempts. Devices are not merged.
+- GET `options` provides source/campaign/page/event suggestions; GET `diagnostics`
+  returns latest activity, event types, configured goals and recording counts.
+- GET `insights` compares selected-goal conversion by source. Signals require
+  100 visits per period and 10 combined converted visits; 3pp and 25% relative
+  changes are heuristics, not statistical tests or causal diagnoses.
+- PATCH `saved/:id` updates only the authenticated user's saved report.
+- [CRM/server imports and financial definitions](BUSINESS.md).
+
+On first v0.2 startup, additive tables/indexes are created and existing visit page
+bounds are repaired transactionally from recorded pageviews. Take a verified
+backup before upgrading; keep it for rollback. The migration does not recover
+information that was never collected.

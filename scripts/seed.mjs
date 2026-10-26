@@ -1,6 +1,7 @@
 import { gzipSync } from 'node:zlib'
 import { id, passwordHash } from '../server/core.js'
 import { ingest } from '../server/ingest.js'
+import { importBusiness } from '../server/business.js'
 
 export const DEMO_SITE = 'demo_openmetrika'
 export function seedDemo(db, now = Date.now()) {
@@ -184,6 +185,44 @@ export function seedDemo(db, now = Date.now()) {
     'Мобильный трафик',
     JSON.stringify({ view: 'overview', filters: { days: '30', device: 'Смартфон' } }),
   )
+  db.prepare('INSERT INTO site_settings VALUES(?,?,?)').run(DEMO_SITE, 'demo_goal_lead', 'UTC')
+  db.prepare('INSERT INTO funnel_settings VALUES(?,?,?)').run('demo_funnel_main', 'visitor', 30)
+  const leads = db
+    .prepare(
+      'SELECT v.* FROM visits v WHERE site_id=? AND EXISTS(SELECT 1 FROM conversions c WHERE c.site_id=v.site_id AND c.visit_id=v.id AND c.goal_id=?) ORDER BY started',
+    )
+    .all(DEMO_SITE, 'demo_goal_lead')
+  const sales = []
+  for (const [i, v] of leads.entries()) {
+    const lead = 'demo-lead-' + i,
+      add = (stage, delay, revenue = 0, cost = 0) => {
+        const ts = v.started + delay * 86400000
+        if (ts <= now)
+          sales.push({
+            event_id: lead + '-' + stage,
+            lead_id: lead,
+            visitor: v.visitor,
+            session: v.id,
+            stage,
+            ts,
+            revenue,
+            cost,
+            currency: 'RUB',
+          })
+      }
+    add('lead', 0)
+    if (i % 3 !== 0) add('qualified', 0.5)
+    if (i % 4 === 0) {
+      add('meeting', 1)
+      add('won', 3)
+      add('paid', 5, 150000 + (i % 5) * 25000, 65000)
+    }
+    if (i % 20 === 0) add('refund', 7, 25000)
+    if (sales.length > 800) {
+      importBusiness(db, DEMO_SITE, { events: sales.splice(0) })
+    }
+  }
+  if (sales.length) importBusiness(db, DEMO_SITE, { events: sales })
 }
 
 export function demoRecording(start = Date.now()) {

@@ -6,7 +6,8 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 if (!existsSync('dist/index.html') || !existsSync('public/om.js'))
   throw Error('Сначала выполните npm run build')
-const output = resolve(process.argv[2] || '../../outputs/openmetrika/openmetrika-0.1.0.tar.gz')
+const version = JSON.parse(readFileSync('package.json', 'utf8')).version
+const output = resolve(process.argv[2] || `../../outputs/openmetrika/openmetrika-${version}.tar.gz`)
 const temporary = mkdtempSync(join(tmpdir(), 'openmetrika-package-')),
   folder = join(temporary, 'openmetrika')
 mkdirSync(folder)

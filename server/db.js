@@ -24,6 +24,31 @@ export function openDatabase(path = process.env.DATABASE_PATH || './data/openmet
     CREATE TABLE IF NOT EXISTS saved_reports(id TEXT PRIMARY KEY,site_id TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,name TEXT NOT NULL,config TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS orders(site_id TEXT NOT NULL,order_id TEXT NOT NULL,visit_id TEXT NOT NULL,ts INTEGER NOT NULL,revenue REAL NOT NULL,currency TEXT NOT NULL,items TEXT NOT NULL,PRIMARY KEY(site_id,order_id),FOREIGN KEY(site_id,visit_id) REFERENCES visits(site_id,id) ON DELETE CASCADE);
     CREATE TABLE IF NOT EXISTS ad_costs(site_id TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,day TEXT NOT NULL,source TEXT NOT NULL,campaign TEXT NOT NULL,currency TEXT NOT NULL,amount REAL NOT NULL,PRIMARY KEY(site_id,day,source,campaign,currency));
+    CREATE INDEX IF NOT EXISTS conversions_visit ON conversions(site_id,visit_id,goal_id);
+    CREATE INDEX IF NOT EXISTS orders_time ON orders(site_id,ts);
+    CREATE TABLE IF NOT EXISTS site_settings(site_id TEXT PRIMARY KEY REFERENCES sites(id) ON DELETE CASCADE,primary_goal TEXT NOT NULL DEFAULT '',timezone TEXT NOT NULL DEFAULT 'UTC');
+    CREATE TABLE IF NOT EXISTS funnel_settings(funnel_id TEXT PRIMARY KEY REFERENCES funnels(id) ON DELETE CASCADE,scope TEXT NOT NULL DEFAULT 'visit',window_days INTEGER NOT NULL DEFAULT 30);
+    CREATE TABLE IF NOT EXISTS business_leads(site_id TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,id TEXT NOT NULL,visitor TEXT NOT NULL DEFAULT '',visit_id TEXT NOT NULL DEFAULT '',created_at INTEGER NOT NULL,PRIMARY KEY(site_id,id));
+    CREATE INDEX IF NOT EXISTS business_leads_visitor ON business_leads(site_id,visitor);
+    CREATE TABLE IF NOT EXISTS business_events(site_id TEXT NOT NULL,lead_id TEXT NOT NULL,id TEXT NOT NULL,stage TEXT NOT NULL,ts INTEGER NOT NULL,revenue REAL NOT NULL DEFAULT 0,cost REAL NOT NULL DEFAULT 0,currency TEXT NOT NULL DEFAULT 'RUB',PRIMARY KEY(site_id,id),FOREIGN KEY(site_id,lead_id) REFERENCES business_leads(site_id,id) ON DELETE CASCADE);
+    CREATE INDEX IF NOT EXISTS business_events_lead ON business_events(site_id,lead_id,ts);
+    CREATE TABLE IF NOT EXISTS integration_keys(id TEXT PRIMARY KEY,site_id TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,hash TEXT NOT NULL UNIQUE,name TEXT NOT NULL,created_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS migrations(id TEXT PRIMARY KEY);
   `)
+  if (!db.prepare('SELECT 1 FROM migrations WHERE id=?').get('visit-page-bounds-v2')) {
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      db.exec(`UPDATE visits SET
+        started=MIN(started,COALESCE((SELECT MIN(e.ts) FROM events e WHERE e.site_id=visits.site_id AND e.visit_id=visits.id),started)),
+        entry=COALESCE((SELECT e.path FROM events e WHERE e.site_id=visits.site_id AND e.visit_id=visits.id AND e.type='pageview' ORDER BY e.ts,e.rowid LIMIT 1),entry),
+        exit=COALESCE((SELECT e.path FROM events e WHERE e.site_id=visits.site_id AND e.visit_id=visits.id AND e.type='pageview' ORDER BY e.ts DESC,e.rowid DESC LIMIT 1),exit)`)
+      db.prepare('INSERT INTO migrations VALUES(?)').run('visit-page-bounds-v2')
+      db.exec('COMMIT')
+    } catch (e) {
+      db.exec('ROLLBACK')
+      db.close()
+      throw e
+    }
+  }
   return db
 }

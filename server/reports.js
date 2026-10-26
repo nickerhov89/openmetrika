@@ -1,11 +1,12 @@
-import { visitFilter, period } from './core.js'
+import { visitFilter, period, goalFilter, dateKey, cleanPath } from './core.js'
 import { gunzipSync } from 'node:zlib'
 
 const round = (n, d = 1) => Number((Number(n) || 0).toFixed(d))
 export function mapSnapshot(db, siteId, query) {
   const f = visitFilter(siteId, query)
   const path =
-    query.path ||
+    query.mapPath ||
+    (query.pathOp !== 'exclude' && query.pathOp !== 'contains' ? query.path : '') ||
     db
       .prepare(
         `SELECT e.path,COUNT(*) n FROM events e JOIN visits v ON v.site_id=e.site_id AND v.id=e.visit_id WHERE ${f.where} AND e.type='click' GROUP BY e.path ORDER BY n DESC LIMIT 1`,
@@ -39,7 +40,14 @@ export function mapSnapshot(db, siteId, query) {
 export function overview(db, siteId, query) {
   const f = visitFilter(siteId, query),
     span = f.range.to - f.range.from + 1,
-    previous = visitFilter(siteId, query, { from: f.range.from - span, to: f.range.from - 1 })
+    previous = visitFilter(
+      siteId,
+      query,
+      query.compareFrom && query.compareTo
+        ? period({ ...query, from: query.compareFrom, to: query.compareTo })
+        : { from: f.range.from - span, to: f.range.from - 1 },
+    )
+  const goal = goalFilter(query)
   const summary = (filter) => {
     const data = db
       .prepare(
@@ -47,10 +55,8 @@ export function overview(db, siteId, query) {
       )
       .get(...filter.params)
     const converted = db
-      .prepare(
-        `SELECT COUNT(*) count FROM visits v WHERE ${filter.where} AND EXISTS(SELECT 1 FROM conversions c WHERE c.site_id=v.site_id AND c.visit_id=v.id)`,
-      )
-      .get(...filter.params).count
+      .prepare(`SELECT COUNT(*) count FROM visits v WHERE ${filter.where} AND ${goal.sql}`)
+      .get(...filter.params, ...goal.params).count
     return {
       ...data,
       active_seconds: round(data.active_seconds),
@@ -60,16 +66,27 @@ export function overview(db, siteId, query) {
       converted,
     }
   }
-  const timeline = db
-    .prepare(
-      `SELECT date(started/1000,'unixepoch') day,COUNT(*) visits,COUNT(DISTINCT visitor) visitors,SUM(pageviews) pageviews FROM visits v WHERE ${f.where} GROUP BY day ORDER BY day`,
-    )
+  const rawTimeline = db
+    .prepare(`SELECT started,visitor,pageviews FROM visits v WHERE ${f.where} ORDER BY started`)
     .all(...f.params)
+  const grouped = new Map()
+  for (const v of rawTimeline) {
+    const day = dateKey(v.started, query.timezone),
+      row = grouped.get(day) || { day, visits: 0, people: new Set(), pageviews: 0 }
+    row.visits++
+    row.people.add(v.visitor)
+    row.pageviews += v.pageviews
+    grouped.set(day, row)
+  }
+  const timeline = [...grouped.values()].map(({ people, ...r }) => ({
+    ...r,
+    visitors: people.size,
+  }))
   const filled = []
   const byDay = new Map(timeline.map((r) => [r.day, r]))
   for (
-    let d = Date.parse(new Date(f.range.from).toISOString().slice(0, 10));
-    d <= f.range.to;
+    let d = Date.parse(dateKey(f.range.from, query.timezone));
+    d <= Date.parse(dateKey(f.range.to, query.timezone));
     d += 86400000
   ) {
     const day = new Date(d).toISOString().slice(0, 10)
@@ -88,9 +105,47 @@ export function overview(db, siteId, query) {
     period: f.range,
     current: totals,
     previous: summary(previous),
+    previousPeriod: previous.range,
+    goal: query.goal || 'any',
     timeline: filled,
     live,
     currencies,
+  }
+}
+
+export function insights(db, siteId, query) {
+  const current = breakdown(db, siteId, query, 'sources'),
+    range = period(query),
+    span = range.to - range.from + 1
+  const previousRange =
+    query.compareFrom && query.compareTo
+      ? period({ ...query, from: query.compareFrom, to: query.compareTo })
+      : { from: range.from - span, to: range.from - 1 }
+  // Compare complete calendar periods explicitly; expose the actual periods to the UI.
+  const previous = breakdown(db, siteId, query, 'sources', previousRange)
+  const signals = []
+  for (const row of current) {
+    const old = previous.find((p) => p.source === row.source && p.medium === row.medium)
+    if (!old || row.visits < 100 || old.visits < 100 || row.converted + old.converted < 10) continue
+    const diff = row.conversion_rate - old.conversion_rate
+    if (Math.abs(diff) >= 3 && Math.abs(diff) / (old.conversion_rate || 1) >= 0.25)
+      signals.push({
+        source: row.source,
+        medium: row.medium,
+        current: row.conversion_rate,
+        previous: old.conversion_rate,
+        change_pp: round(diff),
+        visits: row.visits,
+        previous_visits: old.visits,
+        direction: diff < 0 ? 'down' : 'up',
+      })
+  }
+  return {
+    signals: signals.sort((a, b) => Math.abs(b.change_pp) - Math.abs(a.change_pp)).slice(0, 5),
+    minimum_visits: 100,
+    note: 'Эвристические сигналы для проверки, не доказательство причины или статистической значимости. Проверьте качество данных и сезонность.',
+    period: range,
+    previousPeriod: previousRange,
   }
 }
 
@@ -104,8 +159,9 @@ const dimensions = {
   entry: ['entry'],
   exit: ['exit'],
 }
-export function breakdown(db, siteId, query, dimension = 'sources') {
-  const f = visitFilter(siteId, query)
+export function breakdown(db, siteId, query, dimension = 'sources', rangeOverride) {
+  const f = visitFilter(siteId, query, rangeOverride)
+  const goal = goalFilter(query)
   if (dimension === 'retention') {
     const rows = db
       .prepare(
@@ -173,9 +229,9 @@ export function breakdown(db, siteId, query, dimension = 'sources') {
   if (!cols) throw Error('Неизвестный отчёт')
   return db
     .prepare(
-      `SELECT ${cols.map((c) => `v.${c}`).join(',')},COUNT(*) visits,COUNT(DISTINCT visitor) visitors,SUM(pageviews) pageviews,ROUND(AVG(active_seconds),1) active_seconds,SUM(CASE WHEN EXISTS(SELECT 1 FROM conversions c WHERE c.site_id=v.site_id AND c.visit_id=v.id) THEN 1 ELSE 0 END) converted FROM visits v WHERE ${f.where} GROUP BY ${cols.map((c) => `v.${c}`).join(',')} ORDER BY visits DESC LIMIT 1000`,
+      `SELECT ${cols.map((c) => `v.${c}`).join(',')},COUNT(*) visits,COUNT(DISTINCT visitor) visitors,SUM(pageviews) pageviews,ROUND(AVG(active_seconds),1) active_seconds,SUM(CASE WHEN ${goal.sql} THEN 1 ELSE 0 END) converted FROM visits v WHERE ${f.where} GROUP BY ${cols.map((c) => `v.${c}`).join(',')} ORDER BY visits DESC LIMIT 1000`,
     )
-    .all(...f.params)
+    .all(...goal.params, ...f.params)
     .map((row) => ({
       ...row,
       label: cols.map((c) => row[c] || 'Не определено').join(' / '),
@@ -199,42 +255,95 @@ export function goalReport(db, siteId, query) {
 }
 export function funnelReport(db, siteId, query, funnel) {
   const f = visitFilter(siteId, query),
-    steps = JSON.parse(funnel.steps),
-    rows = db
-      .prepare(
-        `SELECT e.visit_id,e.ts,e.type,e.path,e.name FROM events e JOIN visits v ON v.site_id=e.site_id AND v.id=e.visit_id WHERE ${f.where} AND e.type IN ('pageview','event') ORDER BY e.ts,e.rowid`,
-      )
-      .all(...f.params)
-  const positions = new Map(),
-    counts = steps.map(() => 0)
+    steps = JSON.parse(funnel.steps)
+  const settings = db.prepare('SELECT * FROM funnel_settings WHERE funnel_id=?').get(funnel.id) || {
+    scope: 'visit',
+    window_days: 30,
+  }
+  const people = settings.scope === 'visitor',
+    windowMs = settings.window_days * 86400000
+  const eligible = db
+    .prepare(`SELECT v.id,v.visitor FROM visits v WHERE ${f.where}`)
+    .all(...f.params)
+  const ids = new Set(eligible.map((v) => v.id))
+  const visitors = new Set(eligible.map((v) => v.visitor))
+  const rawRows = people
+    ? db
+        .prepare(
+          "SELECT e.visit_id,v.visitor,e.ts,e.type,e.path,e.name FROM events e JOIN visits v ON v.site_id=e.site_id AND v.id=e.visit_id WHERE e.site_id=? AND e.ts>=? AND e.ts<=? AND e.type IN ('pageview','event') ORDER BY e.ts,e.rowid LIMIT 100001",
+        )
+        .all(siteId, f.range.from, Math.min(Date.now(), f.range.to + windowMs))
+    : db
+        .prepare(
+          `SELECT e.visit_id,v.visitor,e.ts,e.type,e.path,e.name FROM events e JOIN visits v ON v.site_id=e.site_id AND v.id=e.visit_id WHERE ${f.where} AND e.type IN ('pageview','event') ORDER BY e.ts,e.rowid LIMIT 100001`,
+        )
+        .all(...f.params)
+  const truncated = rawRows.length > 100000
+  const rows = (truncated ? rawRows.slice(0, 100000) : rawRows).filter(
+    (e) => !people || visitors.has(e.visitor),
+  )
+  const states = new Map(),
+    reached = steps.map(() => new Set()),
+    lastVisit = new Map()
   for (const e of rows) {
-    const pos = positions.get(e.visit_id) || 0
-    const step = steps[pos]
-    if (
-      step &&
-      ((step.kind === 'page' && e.type === 'pageview' && e.path === step.value) ||
-        (step.kind === 'event' && e.type === 'event' && e.name === step.value))
-    ) {
-      counts[pos]++
-      positions.set(e.visit_id, pos + 1)
+    const key = people ? e.visitor : e.visit_id
+    const starts = states.get(key) || Array(steps.length).fill(null)
+    // Reverse traversal prevents one event from satisfying two identical steps.
+    // The latest valid start at each stage preserves overlapping attempts.
+    for (let i = steps.length - 1; i >= 0; i--) {
+      const step = steps[i]
+      if (!(
+        (step.kind === 'page' && e.type === 'pageview' && e.path === step.value) ||
+        (step.kind === 'event' && e.type === 'event' && e.name === step.value)
+      ))
+        continue
+      const start = i ? starts[i - 1] : e.ts
+      if (
+        (i === 0 && (!ids.has(e.visit_id) || e.ts > f.range.to)) ||
+        start === null ||
+        (people && e.ts - start > windowMs)
+      )
+        continue
+      starts[i] = Math.max(starts[i] ?? 0, start)
+      reached[i].add(key)
+      lastVisit.set(key, e.visit_id)
     }
+    states.set(key, starts)
   }
   return {
     ...funnel,
+    truncated,
+    ...settings,
+    scope: settings.scope,
+    window_days: settings.window_days,
     steps: steps.map((s, i) => ({
       ...s,
-      count: counts[i],
-      conversion: i ? round(counts[i - 1] ? (counts[i] / counts[i - 1]) * 100 : 0) : 100,
+      count: reached[i].size,
+      conversion: i
+        ? round(reached[i - 1].size ? (reached[i].size / reached[i - 1].size) * 100 : 0)
+        : 100,
+      from_start: round(reached[0].size ? (reached[i].size / reached[0].size) * 100 : 0),
+      dropoff: i < steps.length - 1 ? reached[i].size - reached[i + 1].size : 0,
+      dropoff_visits:
+        i < steps.length - 1
+          ? [...reached[i]]
+              .filter((k) => !reached[i + 1].has(k))
+              .slice(0, 25)
+              .map((k) => lastVisit.get(k))
+          : [],
     })),
   }
 }
 export function behavior(db, siteId, query) {
   const f = visitFilter(siteId, query),
+    page =
+      query.mapPath ||
+      (query.path && !['contains', 'exclude'].includes(query.pathOp) ? cleanPath(query.path) : ''),
     rows = db
       .prepare(
-        `SELECT e.type,e.path,e.props,e.visit_id FROM events e JOIN visits v ON v.site_id=e.site_id AND v.id=e.visit_id WHERE ${f.where} AND e.type IN ('click','scroll','form_start','form_submit','form_field') LIMIT 50000`,
+        `SELECT e.type,e.path,e.props,e.visit_id FROM events e JOIN visits v ON v.site_id=e.site_id AND v.id=e.visit_id WHERE ${f.where}${page ? ' AND e.path=?' : ''} AND e.type IN ('click','scroll','form_start','form_submit','form_field') ORDER BY e.ts,e.rowid LIMIT 50000`,
       )
-      .all(...f.params)
+      .all(...f.params, ...(page ? [cleanPath(page)] : []))
   const clicks = [],
     scrolls = new Map(),
     forms = new Map(),
@@ -249,7 +358,7 @@ export function behavior(db, siteId, query) {
       }
     }
     if (row.type === 'scroll') {
-      const key = row.visit_id + '|' + row.path
+      const key = row.visit_id
       scrolls.set(key, Math.max(scrolls.get(key) || 0, p.depth))
     }
     if (row.type.startsWith('form_')) {
@@ -284,7 +393,13 @@ export function behavior(db, siteId, query) {
       ...f,
       starts: f.starts.size,
       submits: f.submits.size,
-      conversion: round(f.starts.size ? (f.submits.size / f.starts.size) * 100 : 0),
+      completed: [...f.submits].filter((id) => f.starts.has(id)).length,
+      untracked_starts: [...f.submits].filter((id) => !f.starts.has(id)).length,
+      conversion: round(
+        f.starts.size
+          ? ([...f.submits].filter((id) => f.starts.has(id)).length / f.starts.size) * 100
+          : 0,
+      ),
     })),
     truncated: rows.length === 50000,
   }
@@ -298,8 +413,16 @@ export function visitsReport(db, siteId, query) {
     .all(...f.params)
 }
 
+function orderFilter(siteId, query) {
+  if (query.dateBasis === 'visit') return visitFilter(siteId, query)
+  const range = period(query),
+    f = visitFilter(siteId, query, { from: 0, to: Number.MAX_SAFE_INTEGER })
+  f.where += ' AND o.ts>=? AND o.ts<=?'
+  f.params.push(range.from, range.to)
+  return f
+}
 export function commerceReport(db, siteId, query) {
-  const f = visitFilter(siteId, query),
+  const f = orderFilter(siteId, query),
     join = `FROM orders o JOIN visits v ON v.site_id=o.site_id AND v.id=o.visit_id WHERE ${f.where}`
   const totals = db
     .prepare(`SELECT currency,COUNT(*) orders,SUM(revenue) revenue ${join} GROUP BY currency`)
@@ -317,29 +440,34 @@ export function commerceReport(db, siteId, query) {
 }
 export function acquisitionReport(db, siteId, query) {
   if (
-    ['device', 'browser', 'os', 'country', 'path', 'converted', 'replay', 'medium'].some(
-      (k) => query[k],
-    )
+    [
+      'device',
+      'browser',
+      'os',
+      'country',
+      'path',
+      'converted',
+      'replay',
+      'medium',
+      'conditions',
+    ].some((k) => query[k])
   )
     throw Error(
       'Расходы доступны по периоду, источнику и кампании. Сбросьте остальные условия сегмента.',
     )
   const f = visitFilter(siteId, query),
+    ordersFilter = orderFilter(siteId, query),
     range = period(query)
   const costs = db
     .prepare(
       'SELECT source,campaign,currency,SUM(amount) cost FROM ad_costs WHERE site_id=? AND day>=? AND day<=? GROUP BY source,campaign,currency',
     )
-    .all(
-      siteId,
-      new Date(range.from).toISOString().slice(0, 10),
-      new Date(range.to).toISOString().slice(0, 10),
-    )
+    .all(siteId, dateKey(range.from, query.timezone), dateKey(range.to, query.timezone))
   const revenues = db
     .prepare(
-      `SELECT v.source,v.campaign,o.currency,SUM(o.revenue) revenue,COUNT(*) orders FROM orders o JOIN visits v ON v.site_id=o.site_id AND v.id=o.visit_id WHERE ${f.where} GROUP BY v.source,v.campaign,o.currency`,
+      `SELECT v.source,v.campaign,o.currency,SUM(o.revenue) revenue,COUNT(*) orders FROM orders o JOIN visits v ON v.site_id=o.site_id AND v.id=o.visit_id WHERE ${ordersFilter.where} GROUP BY v.source,v.campaign,o.currency`,
     )
-    .all(...f.params)
+    .all(...ordersFilter.params)
   const traffic = db
     .prepare(
       `SELECT source,campaign,COUNT(*) visits FROM visits v WHERE ${f.where} GROUP BY source,campaign`,
@@ -358,16 +486,18 @@ export function acquisitionReport(db, siteId, query) {
       campaign: r.campaign,
       currency: r.currency,
       cost: 0,
+      has_cost: false,
       revenue: 0,
       orders: 0,
       ...rows.get(key),
       ...r,
+      ...(Object.hasOwn(r, 'cost') ? { has_cost: true } : {}),
     })
   }
   return [...rows.values()].map((r) => ({
     ...r,
     visits: traffic.find((t) => t.source === r.source && t.campaign === r.campaign)?.visits || 0,
     roas: r.cost ? round(r.revenue / r.cost, 2) : null,
-    cpa: r.orders ? round(r.cost / r.orders, 2) : null,
+    cpa: r.has_cost && r.orders ? round(r.cost / r.orders, 2) : null,
   }))
 }

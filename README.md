@@ -63,7 +63,11 @@ Create the first admin before opening public access. Do not expose the database.
 - Dashboard, daily traffic, previous-period comparison, real-time visitor count,
   source/campaign/content/device/browser/OS reports, weekly retention, sortable tables and CSV export.
 - Date ranges, segments, saved reports and an inspectable visit timeline.
-- Event and page goals, unique converted sessions, ordered within-session funnels.
+- Event/page goals, a configurable primary goal and conversion by selected goal.
+- Editable visual funnels within a session or across a visitor's return visits,
+  configurable conversion windows and links to drop-off visits.
+- AND/OR segments including event parameters, report-row drill-down, shareable report
+  URLs, editable saved reports, custom comparison periods and account timezones.
 - Click overlays on saved DOM snapshots, coordinate distributions, link counts, scroll-depth distribution and form completion
   reports based on collected events.
 - Session recording/playback with **rrweb**: input masking, private-element exclusion,
@@ -71,13 +75,21 @@ Create the first admin before opening public access. Do not expose the database.
 - Ecommerce orders, currency-separated revenue and product totals. Ad cost entry/CSV
   import and source/campaign ROAS with no duplicate spend on repeated imports.
 - SQLite WAL storage, retention cleanup, verified snapshots and safe restore.
+- B2B sales outcomes: lead → qualified → meeting → won → payment, refunds, direct
+  costs, cohorts, first/last non-direct attribution, CPQL, meeting cost and margin.
+  Authenticated CRM imports use dedicated write-only integration keys; existing
+  reporting keys remain read-only. See [CRM integration](docs/BUSINESS.md).
 - No external tracking services, fonts or CDN dependencies in the dashboard/tracker.
 
 ## Tracker
 
 ```html
-<script defer src="https://analytics.example.com/om.js"
-        data-site="YOUR_SITE_ID" data-replay="true"></script>
+<script
+  defer
+  src="https://analytics.example.com/om.js"
+  data-site="YOUR_SITE_ID"
+  data-replay="true"
+></script>
 ```
 
 The dashboard generates the correct site ID. Recording requires **both** the
@@ -116,17 +128,21 @@ CI also builds the Docker image and starts it to check health and first-run setu
 
 This is a single-node analytics server intended for small and medium sites.
 SQLite is convenient for self-hosting; it is not a distributed warehouse.
-All report dates are UTC. Sessions expire after 30 minutes without activity;
+Report dates use the counter timezone (UTC by default). Sessions expire after 30 minutes without activity;
 engagement heartbeats count only visible, recently interacted-with pages. A bounce
 is a session with fewer than two views, under 15 active seconds and no goal.
-Conversion rate counts distinct sessions with at least one goal, not goal events.
+Conversion rate counts distinct sessions with the selected/primary goal, not goal events.
 Goals start collecting at creation; funnels can evaluate existing events.
 
 No demographics, cross-site identity graph, unavailable search terms or automatic
 Yandex Direct integration are fabricated. Country stays unknown without a GeoIP
-source. Revenue currently comes from tracked ecommerce, not a CRM connector.
-Cost attribution is exact source/campaign matching by visit; no cross-device model
-is implied. Click maps can overlay a saved rrweb DOM snapshot; when no matching recording exists, a normalized coordinate grid is available.
+source. Ecommerce revenue uses order dates by default, with a visit-date option.
+CRM results require real server imports; no vendor connection is automatically provisioned.
+Ecommerce cost attribution matches source/campaign by visit; B2B reports additionally
+support first touch / last non-direct touch within a 7/30/90-day window. There is
+no cross-device identity model. Missing costs are unknown, never assumed free.
+Click maps isolate the chosen page and can overlay a saved rrweb DOM snapshot;
+when no matching recording exists, a normalized coordinate grid is available.
 Recordings of cross-origin frames, canvas, video and inaccessible assets are limited
 by rrweb/browser capabilities. See [detailed limits](docs/INTEGRATION.md).
 
