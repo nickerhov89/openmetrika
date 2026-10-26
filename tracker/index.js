@@ -174,7 +174,12 @@ function boot(script) {
     let batch = null
     stopRecord = record({
       emit(event) {
-        if(event.type===4&&event.data?.href){try{const u=new URL(event.data.href);event.data.href=u.origin+u.pathname}catch{}}
+        if (event.type === 4 && event.data?.href) {
+          try {
+            const u = new URL(event.data.href)
+            event.data.href = u.origin + u.pathname
+          } catch {}
+        }
         if (
           !batch ||
           batch.events.length >= 300 ||
@@ -265,9 +270,10 @@ function boot(script) {
           height: rect.scrollHeight,
           selector: selector(el),
           link: a?.getAttribute('href') || '',
-          label: el.closest('.om-mask')||/^tel:|^mailto:/i.test(a?.getAttribute('href')||'')
-            ? ''
-            : (el.getAttribute('aria-label') || el.textContent || '').trim().slice(0, 120),
+          label:
+            el.closest('.om-mask') || /^tel:|^mailto:/i.test(a?.getAttribute('href') || '')
+              ? ''
+              : (el.getAttribute('aria-label') || el.textContent || '').trim().slice(0, 120),
         })
         if (a) {
           let url

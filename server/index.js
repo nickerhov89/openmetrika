@@ -93,7 +93,10 @@ export function createApp({ db = openDatabase(), demo = false, readOnly = false 
   )
   app.get('/om.js', (req, res) => {
     res.removeHeader('Content-Security-Policy')
-    res.set({ 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'public,max-age=300' })
+    res.set({
+      'Access-Control-Allow-Origin': '*',
+      'Cache-Control': demo ? 'no-store' : 'public,max-age=300',
+    })
     res.sendFile(resolve(root, 'public/om.js'))
   })
   app.get('/api/health', (req, res) => res.json({ ok: true, version: '0.1.0' }))

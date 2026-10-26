@@ -36,6 +36,8 @@ export default function MapOverlay({ snapshot, clicks }) {
           const scale = Math.min(1, (outer.current.clientWidth - 2) / width)
           player.wrapper.style.width = width + 'px'
           player.wrapper.style.height = height + 'px'
+          player.wrapper.style.left = '0'
+          player.wrapper.style.top = '0'
           player.wrapper.style.transform = `scale(${scale})`
           player.wrapper.style.transformOrigin = 'top left'
           mount.current.style.height = height * scale + 'px'

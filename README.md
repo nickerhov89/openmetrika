@@ -11,6 +11,8 @@ your data on your own server. It is an independent project, not a Yandex product
 Built by [Polza Agency](https://polzaagency.ru/?utm_source=openmetrika&utm_medium=github).
 Need B2B customers to put into your funnel? That is what Polza does.
 
+![OpenMetrika dashboard with fictional demonstration traffic](docs/dashboard.png)
+
 ## Run locally
 
 Requires **Node.js 24+**. No external database, Redis or SaaS account is needed.

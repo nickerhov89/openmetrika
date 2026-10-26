@@ -165,7 +165,7 @@ test('orders are idempotent, recordings are site scoped, deletion cascades', asy
       items: [{ id: 'sku', name: 'Item', price: 500, quantity: 1 }],
     },
   }
-  await req('/collect/' + site.id, 'POST', packet(sid, [purchase, purchase]), origin)
+  await req('/collect/' + site.id, 'POST', packet(sid, [{type:'pageview',path:'/'},purchase, purchase]), origin)
   assert.equal((await req(base + '/ecommerce')).data.orders.length, 1)
   const replay = {
     session: sid,
@@ -177,6 +177,9 @@ test('orders are idempotent, recordings are site scoped, deletion cascades', asy
   await req('/collect/' + site.id + '/replay', 'POST', replay, origin)
   assert.equal(db.prepare('SELECT COUNT(*) n FROM replay_chunks').get().n, 1)
   assert.equal((await req(base + '/visits/' + sid + '/replay')).data.length, 6)
+  const map = (await req(base + '/map-snapshot?path=/')).data
+  assert.equal(map.events.length, 2)
+  assert.equal(map.path, '/')
   assert.equal(
     (
       await req(

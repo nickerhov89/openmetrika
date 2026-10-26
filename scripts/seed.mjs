@@ -74,8 +74,17 @@ export function seedDemo(db, now = Date.now()) {
       ['yandex', 'cpc', 'brand'],
     ]
   let count = 0
-  for (let day = 29; day >= 0; day--) {
-    const n = day === 0 ? 18 : 65 + Math.floor(rand() * 75) + (29 - day) * 2
+  for (let day = 59; day >= 0; day--) {
+    const n = day === 0 ? 18 : 65 + Math.floor(rand() * 75) + Math.floor((59 - day) * 1.2)
+    const costDay = new Date(midnight - day * 86400000).toISOString().slice(0, 10)
+    db.prepare('INSERT INTO ad_costs VALUES(?,?,?,?,?,?)').run(
+      DEMO_SITE,
+      costDay,
+      'yandex',
+      'brand',
+      'RUB',
+      1500 + Math.floor(rand() * 1200),
+    )
     for (let i = 0; i < n; i++) {
       const start = Math.min(
           now - 30000,
