@@ -1,0 +1,9 @@
+node_modules/
+dist/
+public/om.js
+data/
+backups/
+.env
+*.log
+.DS_Store
+coverage/

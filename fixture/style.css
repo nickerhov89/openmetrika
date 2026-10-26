@@ -1,0 +1,168 @@
+* {
+  box-sizing: border-box;
+}
+html {
+  scroll-behavior: smooth;
+}
+body {
+  margin: 0;
+  background: #f7f6f0;
+  color: #29423a;
+  font-family: Arial, sans-serif;
+}
+a {
+  color: inherit;
+}
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 25px 5%;
+  border-bottom: 1px solid #d7ddd3;
+  font-size: 12px;
+  gap: 20px;
+}
+.logo {
+  font-size: 27px;
+  font-weight: bold;
+  text-decoration: none;
+  letter-spacing: -1.5px;
+}
+small {
+  letter-spacing: 2px;
+  color: #869583;
+  font-size: 10px;
+}
+.hero {
+  padding: 80px 7%;
+  background: radial-gradient(ellipse at 85% 50%, #dbe6c3, transparent 45%);
+}
+h1 {
+  font-size: clamp(50px, 7vw, 100px);
+  line-height: 1.04;
+  letter-spacing: -5px;
+  font-weight: 500;
+  margin: 30px 0;
+}
+h1 em {
+  font-style: normal;
+  color: #8da475;
+}
+p {
+  font-size: 16px;
+  line-height: 1.7;
+  max-width: 500px;
+  color: #7e8d80;
+}
+.primary {
+  display: inline-block;
+  padding: 20px 27px;
+  border: 0;
+  background: #d5ea92;
+  border-radius: 35px;
+  text-decoration: none;
+  color: #29423a;
+  font-size: 14px;
+  cursor: pointer;
+}
+.hero .primary {
+  margin-top: 20px;
+}
+.services,
+.request,
+.test {
+  padding: 75px 7%;
+  border-top: 1px solid #dce1d4;
+}
+.services h2,
+.request h2 {
+  font-size: 48px;
+  font-weight: 500;
+  letter-spacing: -2px;
+}
+.services > div {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 40px;
+  margin: 45px 0;
+}
+.services article {
+  padding: 25px;
+  border-top: 1px solid #c5cebc;
+}
+.services article span {
+  color: #9dac92;
+  font-size: 12px;
+}
+.services button,
+.test button {
+  padding: 15px 25px;
+  border: 1px solid #c7d4b6;
+  border-radius: 7px;
+  background: #e9eedf;
+  color: #3f5442;
+  cursor: pointer;
+}
+.request {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 60px;
+  background: #e9eddc;
+}
+.request form {
+  display: grid;
+  gap: 18px;
+}
+.request label {
+  display: grid;
+  gap: 8px;
+  font-size: 12px;
+  color: #7c8a76;
+}
+input,
+textarea {
+  border: 1px solid #d2dac8;
+  border-radius: 6px;
+  background: #f7f8f2;
+  padding: 13px;
+  font: inherit;
+}
+.private {
+  margin: 40px 7%;
+  padding: 25px;
+  background: #e1e5dc;
+  font-size: 12px;
+}
+.test a {
+  margin-left: 25px;
+}
+footer {
+  padding: 35px 7%;
+  font-size: 11px;
+  color: #98a391;
+  border-top: 1px solid #dbe0d5;
+}
+@media (max-width: 700px) {
+  header span {
+    display: none;
+  }
+  .hero {
+    padding: 55px 7%;
+  }
+  h1 {
+    letter-spacing: -3px;
+  }
+  .services > div,
+  .request {
+    grid-template-columns: 1fr;
+    gap: 25px;
+  }
+  .services h2,
+  .request h2 {
+    font-size: 36px;
+  }
+  .test a {
+    display: block;
+    margin: 20px 0;
+  }
+}

@@ -1,0 +1,26 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - run: npm audit --omit=dev --audit-level=high
+      - run: docker build -t openmetrika:test .
+      - name: Docker runtime smoke test
+        run: |
+          docker run -d --name openmetrika-test -p 127.0.0.1:3015:3015 openmetrika:test
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3015/api/health; then break; fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:3015/api/me | grep '"setup":true'
+          docker logs openmetrika-test
+          docker stop openmetrika-test

@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Northline — тестовый сайт OpenMetrika</title>
+    <link rel="stylesheet" href="/fixture/style.css" />
+    <script defer src="/om.js" data-site="demo_openmetrika" data-replay="true"></script>
+    <script defer src="/fixture/site.js"></script>
+  </head>
+  <body>
+    <header>
+      <a href="/fixture/" class="logo">northline.</a><span>Тестовый сайт · вымышленные данные</span
+      ><a href="/">Вернуться в аналитику ↗</a>
+    </header>
+    <main>
+      <section class="hero">
+        <small>СТРАТЕГИЯ. ДИЗАЙН. РАЗРАБОТКА.</small>
+        <h1>Создаём сайты,<br />которые двигают<br /><em>бизнес.</em></h1>
+        <p>
+          Сильная идея заслуживает сильного сайта. Помогаем брендам находить свой голос и превращать
+          интерес в действие.
+        </p>
+        <a href="#request" class="primary">Обсудить проект ↗</a>
+      </section>
+      <section class="services">
+        <small>ЧТО МЫ ДЕЛАЕМ</small>
+        <h2>От мысли до запуска.</h2>
+        <div>
+          <article>
+            <span>01</span>
+            <h3>Стратегия</h3>
+            <p>Позиционирование, аудитория, продукт и путь к заявке.</p>
+          </article>
+          <article>
+            <span>02</span>
+            <h3>Дизайн</h3>
+            <p>Ясный интерфейс и характер, который запоминается.</p>
+          </article>
+          <article>
+            <span>03</span>
+            <h3>Разработка</h3>
+            <p>Быстрый сайт, удобная редактура и измеримый результат.</p>
+          </article>
+        </div>
+        <button id="pricing">Посмотреть тарифы →</button>
+      </section>
+      <section class="request" id="request">
+        <div>
+          <small>НАЧНЁМ РАЗГОВОР</small>
+          <h2>Что вы хотите<br />изменить?</h2>
+          <p>
+            Эта форма тестовая. Данные никуда не отправляются, содержимое полей не сохраняется в
+            аналитике.
+          </p>
+        </div>
+        <form id="project-request">
+          <label
+            >Компания<input
+              name="company"
+              autocomplete="organization"
+              placeholder="Тестовая компания" /></label
+          ><label
+            >Email<input
+              type="email"
+              name="email"
+              autocomplete="email"
+              placeholder="test@example.invalid" /></label
+          ><label
+            >Задача<textarea
+              name="message"
+              rows="3"
+              placeholder="Тестовая задача"
+            ></textarea></label
+          ><button class="primary">Отправить тестовую заявку ↗</button>
+          <p id="result" role="status"></p>
+        </form>
+      </section>
+      <section class="private om-block" data-om-private>
+        Приватный блок: в записи должен быть скрыт.
+      </section>
+      <section class="test">
+        <h3>Проверка ecommerce</h3>
+        <p>Создаёт вымышленный заказ на 5 000 ₽.</p>
+        <button id="purchase">Тестовая покупка</button
+        ><a href="https://example.org/" target="_blank" rel="noopener noreferrer"
+          >Внешняя ссылка ↗</a
+        >
+      </section>
+    </main>
+    <footer>Northline Studio — вымышленный сайт для проверки OpenMetrika.</footer>
+  </body>
+</html>
