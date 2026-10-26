@@ -24,3 +24,29 @@ jobs:
           curl -fsS http://127.0.0.1:3015/api/me | grep '"setup":true'
           docker logs openmetrika-test
           docker stop openmetrika-test
+      - name: Compose volumes, read-only runtime and backup smoke test
+        run: |
+          docker compose up --build -d
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3015/api/health; then break; fi
+            sleep 2
+          done
+          docker compose exec -T openmetrika node --input-type=module - <<'JS'
+          import assert from 'node:assert/strict';
+          const base='http://127.0.0.1:3015';
+          const r=await fetch(base+'/api/setup',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:'CI owner',email:'ci@example.invalid',password:'synthetic-ci-only-password'})});
+          assert.equal(r.status,201);
+          const cookie=r.headers.get('set-cookie').split(';')[0];
+          const me=await(await fetch(base+'/api/me',{headers:{cookie}})).json();
+          assert.equal(me.user.email,'ci@example.invalid');
+          console.log('Compose persistence and authentication OK');
+          JS
+          docker compose exec -T openmetrika node scripts/backup.mjs create /app/backups/ci-snapshot
+          docker compose exec -T openmetrika node scripts/backup.mjs verify /app/backups/ci-snapshot
+          docker compose exec -T -e DATABASE_PATH=/tmp/restored.db openmetrika node scripts/backup.mjs restore /app/backups/ci-snapshot
+          docker compose exec -T openmetrika node --input-type=module -e "import {DatabaseSync} from 'node:sqlite';const db=new DatabaseSync('/tmp/restored.db',{readOnly:true});if(db.prepare('SELECT COUNT(*) n FROM users').get().n!==1)process.exit(1);db.close()"
+      - name: Clean up containers
+        if: always()
+        run: |
+          docker compose down -v
+          docker rm -f openmetrika-test || true
