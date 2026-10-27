@@ -4,7 +4,7 @@ export const stages = ['lead', 'qualified', 'meeting', 'won', 'paid', 'refund', 
 const externalId = (v) => typeof v === 'string' && /^[\w.:-]{1,100}$/.test(v)
 
 // Only authenticated server imports can change sales outcomes. Browser events cannot.
-export function importBusiness(db, siteId, body) {
+export function importBusiness(db, siteId, body, { transaction = true } = {}) {
   if (!Array.isArray(body.events) || !body.events.length || body.events.length > 1000)
     throw Error('Передайте от 1 до 1000 событий продаж')
   const events = body.events.map((e) => {
@@ -39,7 +39,7 @@ export function importBusiness(db, siteId, body) {
   })
   let imported = 0,
     duplicates = 0
-  db.exec('BEGIN IMMEDIATE')
+  if (transaction) db.exec('BEGIN IMMEDIATE')
   try {
     for (const e of events) {
       const previous = db
@@ -95,9 +95,9 @@ export function importBusiness(db, siteId, body) {
       )
       imported++
     }
-    db.exec('COMMIT')
+    if (transaction) db.exec('COMMIT')
   } catch (e) {
-    db.exec('ROLLBACK')
+    if (transaction) db.exec('ROLLBACK')
     throw e
   }
   return { imported, duplicates }

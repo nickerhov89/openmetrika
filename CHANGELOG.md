@@ -1,5 +1,17 @@
 # Changes
 
+## 0.3.0 — 2026-10-27
+
+- Native amoCRM OAuth connector: encrypted tokens, rotating refresh, single-use
+  owner-bound state, strict account hosts and no writes to the CRM.
+- Pipeline/status mapping, ClientID attribution, optional confirmed-payment deltas
+  and refunds, manual/background sync and automatic 15-minute polling.
+- Atomic/idempotent deal imports, resumable pagination, bounded 429 retries,
+  redacted provider errors and owner-only/demo/read-only restrictions.
+- Setup guide, Compose environment wiring and mocked-provider regression tests.
+- Explicit limits: observed stage/payment dates, no invented intermediate milestones,
+  no use of deal budgets as revenue, direct costs remain a separate import.
+
 ## 0.2.0 — 2026-10-27
 
 - Repair delayed/reordered visit timestamps and entry/exit pages, including a

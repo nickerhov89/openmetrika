@@ -81,6 +81,12 @@ Create the first admin before opening public access. Do not expose the database.
   reporting keys remain read-only. See [CRM integration](docs/BUSINESS.md).
 - No external tracking services, fonts or CDN dependencies in the dashboard/tracker.
 
+## amoCRM
+
+Native OAuth connection, pipeline/status mapping, ClientID attribution, background sync,
+confirmed-payment deltas and refunds. Deal budgets are never treated as payments.
+Owner-only setup, encrypted tokens, no CRM writes. See [amoCRM setup and limitations](docs/AMOCRM.md).
+
 ## Tracker
 
 ```html

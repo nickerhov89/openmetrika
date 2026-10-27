@@ -1737,3 +1737,47 @@ code {
     width: 100%;
   }
 }
+
+.amoCard {
+  padding: 24px;
+  margin-top: 20px;
+}
+.amoHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 16px;
+}
+.amoHeader h2 {
+  margin-top: 0;
+}
+.amoCard .inlineForm {
+  flex-wrap: wrap;
+  margin: 16px 0;
+}
+.amoCard .notice {
+  overflow-wrap: anywhere;
+}
+.amoPipeline {
+  border: 1px solid var(--line, #ddd);
+  border-radius: 8px;
+  margin: 12px 0;
+  padding: 16px;
+  min-width: 0;
+}
+.amoPipeline input[type='checkbox'],
+.amoCard input[type='checkbox'] {
+  width: auto;
+}
+.amoHelp {
+  margin-top: 18px;
+  line-height: 1.6;
+}
+@media (max-width: 760px) {
+  .amoCard {
+    padding: 16px;
+  }
+  .amoHeader {
+    flex-direction: column;
+  }
+}

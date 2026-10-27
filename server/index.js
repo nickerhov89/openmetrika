@@ -31,6 +31,7 @@ import {
   insights,
 } from './reports.js'
 import { importBusiness, businessReport } from './business.js'
+import { createAmo } from './amocrm.js'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const wrap = (handler) => (req, res, next) => {
@@ -40,9 +41,15 @@ const wrap = (handler) => (req, res, next) => {
     next(e)
   }
 }
-export function createApp({ db = openDatabase(), demo = false, readOnly = false } = {}) {
+export function createApp({
+  db = openDatabase(),
+  demo = false,
+  readOnly = false,
+  amoOptions,
+} = {}) {
   const app = express(),
     limits = new Map()
+  const amo = createAmo(db, demo || readOnly ? { env: {} } : amoOptions)
   app.disable('x-powered-by')
   app.use((req, res, next) => {
     res.set({
@@ -102,7 +109,7 @@ export function createApp({ db = openDatabase(), demo = false, readOnly = false 
     })
     res.sendFile(resolve(root, 'public/om.js'))
   })
-  app.get('/api/health', (req, res) => res.json({ ok: true, version: '0.2.0' }))
+  app.get('/api/health', (req, res) => res.json({ ok: true, version: '0.3.0' }))
   app.use('/api', (req, res, next) => {
     res.set('Cache-Control', 'no-store')
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
@@ -238,6 +245,16 @@ export function createApp({ db = openDatabase(), demo = false, readOnly = false 
   app.use('/api', (req, res, next) =>
     req.user ? next() : res.status(401).json({ error: 'Войдите в аккаунт' }),
   )
+  app.get(
+    '/api/amocrm/callback',
+    wrap(async (req, res) => {
+      if (readOnly || demo || req.apiKey)
+        return res.status(403).json({ error: 'OAuth недоступен в демо или по ключу отчётов' })
+      res.set('Referrer-Policy', 'no-referrer')
+      const site = await amo.callback(req.user.id, req.query)
+      res.redirect('/?site=' + encodeURIComponent(site) + '#business')
+    }),
+  )
   const siteOut = (s) => ({
     ...s,
     domains: JSON.parse(s.domains),
@@ -303,6 +320,51 @@ export function createApp({ db = openDatabase(), demo = false, readOnly = false 
     req.site.role === 'owner' && !req.apiKey
       ? next()
       : res.status(403).json({ error: 'Нужны права владельца' })
+  const amoOwner = (req, res, next) => {
+    if (demo || readOnly)
+      return res
+        .status(403)
+        .json({ error: 'amoCRM подключается в собственной установке, вне демо' })
+    owner(req, res, next)
+  }
+  app.get('/api/sites/:siteId/amocrm', owner, (req, res) => res.json(amo.status(req.site.id)))
+  app.post(
+    '/api/sites/:siteId/amocrm/connect',
+    amoOwner,
+    wrap((req, res) => {
+      if (!rate(`amo-connect:${req.user.id}`, 10, 10 * 60000))
+        return res.status(429).json({ error: 'Слишком много попыток подключения' })
+      res.json(amo.begin(req.site.id, req.user.id, req.body.host))
+    }),
+  )
+  app.get(
+    '/api/sites/:siteId/amocrm/catalog',
+    amoOwner,
+    wrap(async (req, res) => res.json(await amo.catalog(req.site.id))),
+  )
+  app.patch(
+    '/api/sites/:siteId/amocrm',
+    amoOwner,
+    wrap(async (req, res) => res.json(await amo.configure(req.site.id, req.body))),
+  )
+  app.post(
+    '/api/sites/:siteId/amocrm/sync',
+    amoOwner,
+    wrap((req, res) => {
+      // Work continues in-process; owner can poll status without holding an HTTP request.
+      const status = amo.status(req.site.id)
+      if (!status.connected || !status.config.pipelines?.length)
+        throw Error('Подключите аккаунт и сохраните настройки воронок')
+      const job = amo.sync(req.site.id)
+      job.catch(() => {})
+      res.status(202).json({ started: true })
+    }),
+  )
+  app.delete(
+    '/api/sites/:siteId/amocrm',
+    amoOwner,
+    wrap((req, res) => res.json(amo.disconnect(req.site.id))),
+  )
   app.patch(
     '/api/sites/:siteId',
     owner,
@@ -807,17 +869,21 @@ export function createApp({ db = openDatabase(), demo = false, readOnly = false 
         err.type === 'entity.too.large' ? 'Пакет слишком большой' : err.message || 'Ошибка запроса',
     })
   })
-  return { app, db }
+  return { app, db, amo }
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const { app, db } = createApp({
+  const { app, db, amo } = createApp({
     demo: process.env.DEMO_MODE === '1',
     readOnly: process.env.DEMO_READ_ONLY === '1',
   })
   const port = Number(process.env.PORT) || 3015,
     host = process.env.HOST || '127.0.0.1'
   const server = app.listen(port, host, () => console.log(`OpenMetrika: http://${host}:${port}`))
+  const amoTimer = setInterval(() => {
+    void amo.tick()
+  }, 60000).unref()
+  void amo.tick()
   const timer = setInterval(() => {
     db.prepare('DELETE FROM auth_sessions WHERE expires<?').run(Date.now())
     db.prepare('DELETE FROM visits WHERE started<?').run(
@@ -828,9 +894,11 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     )
   }, 3600000).unref()
   for (const signal of ['SIGINT', 'SIGTERM'])
-    process.on(signal, () => {
+    process.once(signal, () => {
       clearInterval(timer)
-      server.close(() => {
+      clearInterval(amoTimer)
+      server.close(async () => {
+        await amo.stop()
         db.close()
         process.exit(0)
       })

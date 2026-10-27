@@ -95,3 +95,9 @@ npm run backup -- restore ./backups/snapshot
 Проверки: `npm test`, `npm run build`, `npm audit --omit=dev`.
 
 [Счётчик и API](docs/INTEGRATION.md) · [Безопасность](SECURITY.md) · [Участие](CONTRIBUTING.md)
+
+## Интеграция с amoCRM
+
+OAuth-подключение в разделе «Лиды и прибыль»: воронки, этапы, ClientID,
+подтверждённые оплаты и возвраты, синхронизация по кнопке и каждые 15 минут.
+Бюджет сделки не считается выручкой. [Настройка и ограничения](docs/AMOCRM.md).

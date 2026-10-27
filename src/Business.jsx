@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import AmoCRM from './AmoCRM.jsx'
 
 const labels = {
   lead: 'Заявка',
@@ -375,6 +376,16 @@ export default function Business({
             ))}
           </section>
         </>
+      )}
+      {editable && (
+        <AmoCRM
+          base={base}
+          version={version}
+          useData={useData}
+          api={api}
+          notify={notify}
+          reload={reload}
+        />
       )}
       {editable && (
         <details className="card businessImport">
