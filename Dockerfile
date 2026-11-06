@@ -3,6 +3,8 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY . .
+ARG OPENMETRIKA_BASE_PATH=/
+ENV OPENMETRIKA_BASE_PATH=$OPENMETRIKA_BASE_PATH
 RUN npm run build && npm prune --omit=dev
 
 FROM node:24-bookworm-slim

@@ -45,8 +45,27 @@ jobs:
           docker compose exec -T openmetrika node scripts/backup.mjs verify /app/backups/ci-snapshot
           docker compose exec -T -e DATABASE_PATH=/tmp/restored.db openmetrika node scripts/backup.mjs restore /app/backups/ci-snapshot
           docker compose exec -T openmetrika node --input-type=module -e "import {DatabaseSync} from 'node:sqlite';const db=new DatabaseSync('/tmp/restored.db',{readOnly:true});if(db.prepare('SELECT COUNT(*) n FROM users').get().n!==1)process.exit(1);db.close()"
+      - name: Public demo image, read-only mode and deployment prefix
+        run: |
+          docker build --build-arg OPENMETRIKA_BASE_PATH=/openmetrika-demo/ -t openmetrika:public .
+          docker run -d --name openmetrika-public --read-only --tmpfs /tmp:size=256m,mode=1777 -p 127.0.0.1:3016:3015 -e DEMO_HOST=0.0.0.0 -e DEMO_PORT=3015 -e DEMO_READ_ONLY=1 openmetrika:public node scripts/demo.mjs
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3016/api/health; then break; fi
+            sleep 2
+          done
+          node --input-type=module - <<'JS'
+          import assert from 'node:assert/strict';
+          const origin='http://127.0.0.1:3016';
+          const html=await(await fetch(origin+'/')).text();
+          assert.ok(html.includes('/openmetrika-demo/assets/'));
+          const me=await(await fetch(origin+'/api/me')).json();
+          assert.equal(me.demo,true);assert.equal(me.readOnly,true);assert.equal(me.setup,false);
+          assert.equal((await fetch(origin+'/api/sites/demo_openmetrika/business?days=30')).status,200);
+          for(const path of ['/api/setup','/collect/demo_openmetrika']) assert.equal((await fetch(origin+path,{method:'POST',headers:{'content-type':'application/json'},body:'{}'})).status,403);
+          console.log('Public demo prefix, auto-login and write isolation OK');
+          JS
       - name: Clean up containers
         if: always()
         run: |
           docker compose down -v
-          docker rm -f openmetrika-test || true
+          docker rm -f openmetrika-test openmetrika-public || true

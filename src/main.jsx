@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { createRoot } from 'react-dom/client'
 import Business from './Business.jsx'
+import { publicPath } from './paths.js'
 import {
   LayoutDashboard,
   ChartNoAxesCombined,
@@ -49,7 +50,7 @@ const date = (n) =>
 const secs = (n) =>
   `${Math.floor((n || 0) / 60)}:${String(Math.round((n || 0) % 60)).padStart(2, '0')}`
 async function api(path, method = 'GET', body) {
-  const r = await fetch('/api' + path, {
+  const r = await fetch(publicPath('/api') + path, {
     method,
     headers: method !== 'GET' ? { 'Content-Type': 'application/json' } : undefined,
     body: method !== 'GET' ? JSON.stringify(body || {}) : undefined,
@@ -633,10 +634,16 @@ function App() {
           {session.demo && (
             <div className="demoBanner">
               <span className="badge">ДЕМО</span>Вымышленные данные для знакомства с продуктом.
-              Реальный тестовый сайт:{' '}
-              <a href="/fixture/" target="_blank" rel="noopener noreferrer">
-                открыть <ExternalLink size={13} />
-              </a>
+              {session.readOnly
+                ? 'Публичное демо доступно для просмотра. '
+                : 'Реальный тестовый сайт: '}
+              {session.readOnly ? (
+                <a href="https://polzaagency.ru/openmetrika">О проекте и Polza Agency ↗</a>
+              ) : (
+                <a href={publicPath('/fixture/')} target="_blank" rel="noopener noreferrer">
+                  открыть <ExternalLink size={13} />
+                </a>
+              )}
             </div>
           )}
           {!site ? (
@@ -1349,7 +1356,7 @@ function Reports({ base, query, version, report, setReport, drill }) {
         </select>
         <a
           className="button"
-          href={'/api' + base + '/reports/' + report + query + '&format=csv'}
+          href={publicPath('/api') + base + '/reports/' + report + query + '&format=csv'}
           download
         >
           <Download size={16} />

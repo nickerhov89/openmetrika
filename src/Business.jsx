@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import AmoCRM from './AmoCRM.jsx'
+import { publicPath } from './paths.js'
 
 const labels = {
   lead: 'Заявка',
@@ -227,7 +228,7 @@ export default function Business({
                   <a
                     className="button"
                     href={
-                      '/api' +
+                      publicPath('/api') +
                       base +
                       '/business' +
                       cleanQuery +

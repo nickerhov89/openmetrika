@@ -51,6 +51,12 @@ export function createApp({
     limits = new Map()
   const amo = createAmo(db, demo || readOnly ? { env: {} } : amoOptions)
   app.disable('x-powered-by')
+  if (readOnly)
+    app.use((req, res, next) =>
+      ['GET', 'HEAD', 'OPTIONS'].includes(req.method)
+        ? next()
+        : res.status(403).json({ error: 'Публичное демо доступно только для просмотра' }),
+    )
   app.use((req, res, next) => {
     res.set({
       'X-Content-Type-Options': 'nosniff',

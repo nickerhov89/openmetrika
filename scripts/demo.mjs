@@ -15,7 +15,7 @@ const child = spawn(process.execPath, ['server/index.js'], {
     ...process.env,
     DATABASE_PATH: path,
     DEMO_MODE: '1',
-    HOST: '127.0.0.1',
+    HOST: process.env.DEMO_HOST || '127.0.0.1',
     PORT: process.env.DEMO_PORT || '3015',
   },
 })
