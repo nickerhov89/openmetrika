@@ -532,7 +532,12 @@ function App() {
               </option>
             ))}
           </select>
-          <button className="icon" aria-label="Добавить счётчик" onClick={() => setModal('site')}>
+          <button
+            className="icon"
+            aria-label="Добавить счётчик"
+            disabled={session.readOnly}
+            onClick={() => setModal('site')}
+          >
             <Plus size={17} />
           </button>
         </div>
@@ -624,7 +629,7 @@ function App() {
                   setEditSaved(null)
                   setModal('save')
                 }}
-                disabled={!site}
+                disabled={!site || session.readOnly}
               >
                 <Bookmark size={16} />
                 Сохранить
@@ -633,7 +638,7 @@ function App() {
           </div>
           {session.demo && (
             <div className="demoBanner">
-              <span className="badge">ДЕМО</span>Вымышленные данные для знакомства с продуктом.
+              <span className="badge">ДЕМО</span>Вымышленные данные для знакомства с продуктом.{' '}
               {session.readOnly
                 ? 'Публичное демо доступно для просмотра. '
                 : 'Реальный тестовый сайт: '}

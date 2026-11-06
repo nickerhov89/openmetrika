@@ -15,6 +15,7 @@ export function seedDemo(db, now = Date.now()) {
     now,
   )
   const domains = [
+    'northline.example',
     'localhost:3015',
     '127.0.0.1:3015',
     'localhost:5180',
