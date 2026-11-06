@@ -16,7 +16,9 @@ test('public demo auto-login reads seeded reports but all browser and collector 
     db.close()
   })
   const origin = 'http://127.0.0.1:' + server.address().port
-  const me = await (await fetch(origin + '/api/me')).json()
+  const response = await fetch(origin + '/api/me')
+  assert.equal(response.headers.get('x-robots-tag'), 'noindex, nofollow')
+  const me = await response.json()
   assert.equal(me.demo, true)
   assert.equal(me.readOnly, true)
   assert.equal(me.setup, false)

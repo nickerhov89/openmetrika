@@ -59,6 +59,7 @@ export function createApp({
     )
   app.use((req, res, next) => {
     res.set({
+      ...(demo ? { 'X-Robots-Tag': 'noindex, nofollow' } : {}),
       'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'strict-origin-when-cross-origin',
       'X-Frame-Options': 'SAMEORIGIN',
